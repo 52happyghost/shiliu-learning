@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#ff6b6b">
+  <title>石榴的学习乐园</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <button class="brand" data-nav="home" aria-label="回到首页"><span class="brand-mark" aria-hidden="true"><i></i></span><span><strong>石榴的学习乐园</strong><small>每天开心学一点</small></span></button>
+      <div class="header-actions"><span class="streak" title="连续学习"><span>🔥</span><b id="streakCount">1</b>天</span><span class="stars"><span>⭐</span><b id="starCount">0</b></span><button class="icon-button" id="soundToggle" aria-label="声音开关">🔊</button></div>
+    </header>
+    <main>
+      <section class="view active" data-view="home">
+        <div class="home-hero">
+          <div class="hero-copy"><p class="eyebrow" id="greeting">早上好，小小探索家</p><h1>今天，我们认真学一点</h1><p id="planDescription">系统会根据掌握情况，为你安排新知识和复习。</p><button class="primary-button" id="startDaily"><span>开始今日学习</span><span>▶</span></button><div class="plan-meta"><span>⏱ 约 12 分钟</span><span id="dailyTaskCount">6 个学习任务</span></div></div>
+          <div class="hero-world" aria-label="熊猫、兔子和小老虎学习伙伴"><span class="hero-sun">☀️</span><span class="hero-cloud one">☁️</span><span class="hero-cloud two">☁️</span><span class="doodle-leaf leaf-left">❧</span><span class="doodle-leaf leaf-right">❧</span><div class="hero-animal rabbit-pal" aria-label="小兔子"><span class="bunny-ear left"></span><span class="bunny-ear right"></span><span class="animal-head"><i class="eye left"></i><i class="eye right"></i><i class="nose"></i><i class="cheek left"></i><i class="cheek right"></i></span><span class="animal-body"><i></i></span></div><div class="hero-animal panda-pal" aria-label="熊猫团团"><span class="panda-ear left"></span><span class="panda-ear right"></span><span class="animal-head"><i class="eye-patch left"></i><i class="eye-patch right"></i><i class="eye left"></i><i class="eye right"></i><i class="nose"></i><i class="cheek left"></i><i class="cheek right"></i><i class="smile"></i></span><span class="animal-body"><i class="panda-arm left"></i><i class="panda-arm right"></i></span></div><div class="hero-animal tiger-pal" aria-label="小老虎"><span class="tiger-ear left"></span><span class="tiger-ear right"></span><span class="animal-head"><i class="stripe one"></i><i class="stripe two"></i><i class="stripe three"></i><i class="eye left"></i><i class="eye right"></i><i class="muzzle"></i><i class="nose"></i><i class="cheek left"></i><i class="cheek right"></i></span><span class="animal-body"><i class="body-stripe one"></i><i class="body-stripe two"></i></span></div><div class="hero-ground"></div></div>
+        </div>
+        <section class="today-panel">
+          <div class="today-heading"><div><p class="eyebrow">今日学习路径</p><h2>学一点，练一练，记得牢</h2></div><span class="today-status" id="todayStatus">等待开始</span></div>
+          <div class="learning-path"><div class="path-step"><span class="step-icon review">↻</span><div><b>温故</b><small id="reviewCount">复习旧知识</small></div></div><span class="path-line"></span><div class="path-step"><span class="step-icon learn">💡</span><div><b>知新</b><small id="newCount">学习新知识</small></div></div><span class="path-line"></span><div class="path-step"><span class="step-icon practice">🧩</span><div><b>练习</b><small>多种方式应用</small></div></div><span class="path-line"></span><div class="path-step"><span class="step-icon finish">🌈</span><div><b>总结</b><small>看看今天的进步</small></div></div></div>
+        </section>
+        <section class="subject-section"><div class="section-heading"><div><p class="eyebrow">系统课程</p><h2>三条成长路线</h2></div><button class="text-button" data-nav="curriculum">查看全部课程 →</button></div><div class="subject-grid" id="subjectCards"></div></section>
+        <section class="week-section"><div><p class="eyebrow">本周坚持</p><h2><span id="weekDays">0</span> 天完成学习</h2><p>不追求一次学很多，坚持和复习更重要。</p></div><div class="week-calendar" id="weekCalendar"></div></section>
+      </section>
+
+      <section class="view curriculum-view" data-view="curriculum">
+        <div class="page-heading"><button class="back-button" data-nav="home">←</button><div><p class="eyebrow">成长地图</p><h1>选择学习世界</h1><p>首页和课程页使用同一套主题地图，学习进度会自动同步。</p></div></div>
+        <div class="curriculum-summary" id="curriculumSummary"></div><div class="subject-tabs" id="subjectTabs"></div><div class="unit-list" id="unitList"></div>
+      </section>
+
+      <section class="view english-world-view" data-view="english-world">
+        <div class="story-town-hero">
+          <button class="back-button town-back" data-nav="curriculum" aria-label="返回课程总览">←</button>
+          <div class="town-title"><span>📚 石榴英语故事镇 · 3–7 岁</span><h1>听故事，开口说，英语自然来</h1><p>四阶 40 个主题，从生活听说进阶到短句、绘本、字母音、自然拼读和幼小衔接阅读。</p></div>
+          <div class="town-fox">🦊<small>Hello!</small></div><span class="town-cloud cloud-one">☁️</span><span class="town-cloud cloud-two">☁️</span><div class="town-house house-one">⌂</div><div class="town-house house-two">⌂</div><div class="town-ground"></div>
+        </div>
+        <div class="english-five-steps"><span><b>听</b><small>情境输入</small></span><i>→</i><span><b>看</b><small>图词连接</small></span><i>→</i><span><b>说</b><small>大胆跟读</small></span><i>→</i><span><b>玩</b><small>互动辨认</small></span><i>→</i><span><b>读</b><small>迷你绘本</small></span></div>
+        <div class="course-stage-picker" id="englishStagePicker"></div>
+        <section class="book-path-section"><div class="book-path-heading"><div><p class="eyebrow">3–7 岁分级成长路线</p><h2>四个阶段，40 个主题逐步进阶</h2></div><span>240 个核心词 · 主题短句 · 分级绘本 · 自然拼读</span></div><div class="english-book-map" id="englishBookMap"></div></section>
+      </section>
+
+      <section class="view chinese-world-view" data-view="chinese-world">
+        <div class="kingdom-sky">
+          <button class="back-button kingdom-back" data-nav="curriculum" aria-label="返回课程总览">←</button>
+          <div class="kingdom-title"><span>📜 石榴汉字山谷 · 500 字</span><h1>沿着小路，发现汉字的秘密</h1><p>五个成长阶段、五十个主题单元，从生活识字逐步走向自主阅读和幼小衔接。</p></div>
+          <div class="mini-pomegranate"><span></span><i>•ᴗ•</i></div>
+          <span class="kingdom-cloud cloud-a">☁️</span><span class="kingdom-cloud cloud-b">☁️</span>
+          <div class="kingdom-hill hill-a"></div><div class="kingdom-hill hill-b"></div>
+        </div>
+        <div class="five-step-strip"><span><b>玩</b><small>情境猜字</small></span><i>→</i><span><b>认</b><small>字形字义</small></span><i>→</i><span><b>练</b><small>听辨应用</small></span><i>→</i><span><b>写</b><small>手指描字</small></span><i>→</i><span><b>说</b><small>词语表达</small></span></div>
+        <div class="course-stage-picker" id="chineseStagePicker"></div>
+        <div class="character-map" id="characterMap"></div>
+      </section>
+
+      <section class="view logic-world-view" data-view="logic-world">
+        <div class="logic-space-hero">
+          <button class="back-button logic-back" data-nav="curriculum" aria-label="返回课程总览">←</button>
+          <div class="logic-title"><span>🚀 石榴思维星球 · 3–6 岁</span><h1>动手摆一摆，发现数学规律</h1><p>三阶 36 个主题：从比较、分类和数感，逐步进阶到运算、空间、测量、统计与综合推理。</p></div>
+          <div class="logic-robot"><span>🤖</span><small>一起想办法！</small></div>
+          <span class="space-star star-a">✦</span><span class="space-star star-b">★</span><span class="space-star star-c">✦</span>
+          <div class="space-planet planet-a"></div><div class="space-planet planet-b"></div>
+        </div>
+        <div class="logic-five-steps"><span><b>探</b><small>故事发现</small></span><i>→</i><span><b>摆</b><small>教具操作</small></span><i>→</i><span><b>想</b><small>图像推理</small></span><i>→</i><span><b>说</b><small>表达方法</small></span><i>→</i><span><b>闯</b><small>迁移挑战</small></span></div>
+        <div class="course-stage-picker" id="logicStagePicker"></div>
+        <section class="planet-path-section"><div class="planet-path-heading"><div><p class="eyebrow">3–6 岁能力进阶路线</p><h2>三大阶段，点亮 36 颗思维星</h2></div><span>每颗星 4 组变化练习 · 共 144 个知识点</span></div><div class="logic-planet-map" id="logicPlanetMap"></div></section>
+      </section>
+
+      <section class="view lesson-view" data-view="lesson">
+        <div class="lesson-header"><button class="back-button" id="exitLesson" aria-label="退出本次学习">×</button><div class="lesson-progress"><div><span id="lessonSubject">今日学习</span><b id="lessonCounter">1 / 6</b></div><div class="progress-track"><i id="lessonProgress"></i></div></div><span class="lesson-stars">⭐ <b id="sessionStars">0</b></span></div><div class="lesson-content" id="lessonContent"></div>
+      </section>
+
+      <section class="view report-view" data-view="report">
+        <div class="page-heading"><button class="back-button" data-nav="home">←</button><div><p class="eyebrow">陪伴成长</p><h1>家长中心</h1><p>关注掌握和坚持，不把星星数量当作学习效果。</p></div></div>
+        <div class="report-grid" id="reportStats"></div>
+        <section class="report-section"><div class="section-heading"><div><p class="eyebrow">能力发展</p><h2>各科学习情况</h2></div></div><div id="masteryReport"></div></section>
+        <section class="report-section"><div class="section-heading"><div><p class="eyebrow">教学建议</p><h2>接下来这样学</h2></div></div><div class="teacher-advice" id="teacherAdvice"></div></section>
+        <section class="report-section settings"><div><h2>学习设置</h2><p>清除这台设备上保存的星星、课程和掌握记录。</p></div><button class="danger-button" id="resetProgress">重置全部进度</button></section>
+      </section>
+
+      <section class="view games-view" data-view="games">
+        <div class="page-heading"><button class="back-button" data-nav="home">←</button><div><p class="eyebrow">边玩边练</p><h1>三大能力游戏岛</h1><p>每条路线从感知、辨认走向理解和应用，每局 5 轮，获得星星后解锁下一关。</p></div></div>
+        <div class="game-subject-tabs" id="gameSubjectTabs"></div>
+        <section class="game-route-panel" id="gameRoutePanel"><div class="game-route-heading" id="gameRouteHeading"></div><div class="game-level-map" id="gameLevelMap"></div></section>
+        <section class="progressive-game" id="progressiveGame" hidden><div class="game-play-header"><button class="back-button" data-close-game aria-label="退出当前游戏">×</button><div><span id="gamePlayTitle">游戏挑战</span><div class="game-round-track"><i id="gameRoundProgress"></i></div></div><b>⭐ <span id="gameCorrectCount">0</span></b></div><div class="game-play-content" id="gamePlayContent"></div></section>
+      </section>
+    </main>
+    <nav class="bottom-nav"><button class="active" data-nav="home"><span>🏠</span><b>今天</b></button><button data-nav="curriculum"><span>🗺️</span><b>课程</b></button><button data-nav="games"><span>🎮</span><b>游戏</b></button><button data-nav="report"><span>📊</span><b>家长</b></button></nav>
+  </div>
+  <div class="confirm-modal" id="confirmModal"><div><span>🌿</span><h2>今天先学到这里吗？</h2><p>进度已经保存，下次可以接着学。</p><button class="soft-button" id="keepLearning">继续学习</button><button class="text-button" id="confirmExit">先休息</button></div></div><div class="toast" id="toast" role="status"></div>
+  <script src="curriculum.js"></script><script src="app.js"></script>
+</body>
+</html>
