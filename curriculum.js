@@ -43,12 +43,12 @@ const ENGLISH_UNITS = [
   ['常见字母组合','听辨 sh、ch、th、wh、ph',[['ship','轮船','🚢','/ʃɪp/ · sh'],['fish','鱼','🐟','/fɪʃ/ · sh'],['chair','椅子','🪑','/tʃeə/ · ch'],['three','三','3️⃣','/θriː/ · th'],['whale','鲸鱼','🐋','/weɪl/ · wh'],['phone','电话','📱','/fəʊn/ · ph']],{pattern:'I can read {word}.',reader:['Some letters work as a team.','Read the team in {word}.','Now say the whole word.'],focus:'常见字母组合与音标提示'}],
   ['高频词绘本','在句子中整体认读基础高频词',[['the','这个/那个','🔖','/ðə/'],['is','是','🟰','/ɪz/'],['a','一个','1️⃣','/ə/'],['to','去/到','➡️','/tuː/'],['and','和','➕','/ænd/'],['can','能够','💪','/kæn/']],{pattern:'The word is {word}.',reader:['I can read a little book.','I found this word: {word}.','The words make a sentence.'],focus:'高频词整体认读'}]
 ];
-function chineseUnit(title, goal, icon, chars, examples, readings = '') {
-  const words = [...chars]; const phrases = examples.split(' '); const pinyin = readings ? readings.split(' ') : [];
-  return [title, goal, words.map((word, index) => [word, pinyin[index] || '', phrases[index] || `${word}字`, icon])];
+function chineseUnit(title, goal, icon, chars, examples, readings = '', visuals = '') {
+  const words = [...chars]; const phrases = examples.split(' '); const pinyin = readings ? readings.split(' ') : []; const pictures = visuals ? visuals.split(' ') : [];
+  return [title, goal, words.map((word, index) => [word, pinyin[index] || '', phrases[index] || `${word}字`, pictures[index] || icon])];
 }
 const CHINESE_UNITS = [
-  chineseUnit('自然象形字','从自然图景理解最早的一批汉字','☀️','日月山水火木花草石土','太阳 月亮 高山 河水 火苗 木头 花朵 小草 石头 土地','rì yuè shān shuǐ huǒ mù huā cǎo shí tǔ'),
+  chineseUnit('自然象形字','从自然图景理解最早的一批汉字','☀️','日月山水火木花草石土','太阳 月亮 高山 河水 火苗 木头 花朵 小草 石头 土地','rì yuè shān shuǐ huǒ mù huā cǎo shí tǔ','☀️ 🌙 ⛰️ 💧 🔥 🌳 🌸 🌿 🪨 🌱'),
   chineseUnit('我的身体','认识身体部位和自己的身体','🧒','人口手目耳足头心牙舌','大人 门口 小手 目光 耳朵 手足 头发 爱心 牙齿 舌头','rén kǒu shǒu mù ěr zú tóu xīn yá shé'),
   chineseUnit('数字汉字','建立一到十的字形与数量联系','🔢','一二三四五六七八九十','一个 两个 三只 四本 五朵 六条 七天 八个 九月 十分','yī èr sān sì wǔ liù qī bā jiǔ shí'),
   chineseUnit('动物朋友','认识幼儿常见动物名称','🐾','鸟鱼虫牛羊马狗猫兔鸡','小鸟 小鱼 昆虫 水牛 山羊 小马 小狗 小猫 白兔 小鸡','niǎo yú chóng niú yáng mǎ gǒu māo tù jī'),
@@ -99,6 +99,62 @@ const CHINESE_UNITS = [
   chineseUnit('小学准备','熟悉作业、姓名和年级用字','🎒','课作业名姓级册习练考','上课 作业 作业 名字 姓名 年级 书册 复习 练习 考试'),
   chineseUnit('品格成长','认识礼貌、诚信和坚持用字','🌟','礼貌诚实守信勇敢勤劳','礼物 礼貌 诚心 诚实 遵守 信用 勇气 勇敢 勤快 劳动')
 ];
+
+// 每个字都使用与字义对应的图景，不再把一个单元图标重复十次。
+const CHINESE_VISUAL_SETS = [
+  '☀️ 🌙 ⛰️ 💧 🔥 🌳 🌸 🌿 🪨 🌱',
+  '🧑 👄 ✋ 👁️ 👂 🦶 🧒 ❤️ 🦷 👅',
+  '1️⃣ 2️⃣ 3️⃣ 4️⃣ 5️⃣ 6️⃣ 7️⃣ 8️⃣ 9️⃣ 🔟',
+  '🐦 🐟 🐛 🐄 🐑 🐴 🐶 🐱 🐰 🐔',
+  '⬆️ ⬇️ ⬅️ ➡️ 🎯 📦 🚪 ⏩ ⏪ ↔️',
+  '🐘 🐭 ➕ ➖ 📏 ✏️ 🦒 🐜 🔴 ⚪',
+  '👨 👩 👴 👵 👦 👧 🧒 👧 🏠 🤗',
+  '🚪 🪟 🪵 🪑 💡 🚗 🛏️ 📖 🎒 ☂️',
+  '🚶 🏃 👀 👂 🍚 🥛 🪑 🧍 📖 ✍️',
+  '🌤️ 🌍 ☁️ 🌧️ 🌅 🌇 📆 ⏰ 📍 ➡️',
+  '🦘 💬 👕 🧥 🧼 😴 🛌 🔓 🔒 🤲',
+  '🌳 🍃 🍎 🌾 🏞️ 🌊 🌬️ ❄️ ☀️ ☁️',
+  '🌾 🍚 🥬 🍖 🥚 🍜 🍉 🫘 🍬 🍵',
+  '📚 🏫 🏫 🧑‍🏫 🧑‍🎓 🧒 ✏️ 📄 🎨 🀄',
+  '⏱️ ↩️ 🌸 ☀️ 🍂 ❄️ 🥶 🥵 🧣 🍃',
+  '👍 👎 ⚡ 🐢 ✨ 🕰️ 😄 😢 ❤️ 😨',
+  '👕 🧢 👟 🧦 👖 👗 👔 🔘 👝 🧣',
+  '⚫ 🟡 🔵 🟢 ⚪ 🟨 📐 🔘 ➖ 🔷',
+  '⛵ 🪽 ✈️ 🛣️ 🌉 ⚓ 🌳 🏪 🧑‍⚕️ 🏥',
+  '🏛️ 🤝 🏙️ 🌆 🏡 🛣️ 🏭 🏟️ 🏞️ 🛖',
+  '🙋 🫵 👦 👧 👨‍👩‍👧 ❓ 🪞 👤 👨 👩',
+  '👋 🚶 ↩️ 🔍 🎁 🙏 ✅ 💪 💡 🤔',
+  '✅ 📦 📍 ❌ ➕ 🤝 🔗 ☑️ ❓ 💭',
+  '1️⃣ 🐰 📘 📄 🐟 👟 ◐ 📅 ❓ 🥇',
+  '🙏 ❓ 💬 🛠️ 🧰 🤲 ⬇️ 📥 ↔️ 🚶',
+  '📄 🏷️ 💬 ❓ 📖 🎵 🔊 💡 🟰 ✅',
+  '🙏 🔄 👀 🎉 👋 🦺 🛡️ 🤝 🆘 👣',
+  '👁️ 👃 🙂 🧍 🫀 👄 🦶 ☝️ 💬 📣',
+  '🫸 🫷 🥊 👏 🤗 ✋ ↔️ 🧗 🧎 🔄',
+  '🚪 🚶 🎯 👣 🏠 🛑 ⏳ 📦 🤲 🎒',
+  '🌅 🌇 ☀️ ⭐ 📦 🚪 ↔️ 🔭 🔎 📍',
+  '✅ 🔁 📏 ↪️ 🪵 🧵 🪶 🏋️ ↔️ 🤏',
+  '💡 🌑 ☀️ 💦 🥛 🥣 ✅ 🎭 💧 🧽',
+  '🎋 🌾 🌱 🌰 🫚 🌿 🌳 🌲 🌸 🌺',
+  '🐷 🦆 🪿 🐭 🐯 🐲 🐍 🐒 🦌 🐘',
+  '🐝 🦋 🐜 🐜 🐢 🦐 🐚 🐸 🐋 🦈',
+  '🍎 🍑 🍐 🍊 🍇 🍇 🥕 🥕 🍓 🍌',
+  '🍳 🥣 🍽️ 🥛 🥄 🥢 🔪 🍴 🍼 🫖',
+  '🏠 🏡 🛋️ 🍳 🚿 🗄️ 🪞 🕰️ 🧱 🪟',
+  '🤒 💊 😣 😖 🩹 😷 🌡️ 🩺 👩‍⚕️ 💪',
+  '👀 🧠 💭 💡 🤔 🧮 ☑️ 🔍 ✅ ✏️',
+  '0️⃣ 💯 1️⃣ 1️⃣ ➕ ➖ 🤝 🧮 🔢 ⚖️',
+  '➖ ↕️ ↙️ ↘️ ↪️ 🪝 🧩 🔑 🧱 🧩',
+  '📏 📐 📦 ✂️ 🧴 🧽 🟩 🔔 🚩 ⚽',
+  '📅 ⭐ 📆 #️⃣ ⏱️ 🕰️ ☀️ 🌅 🌙 🏁',
+  '🔍 🎯 ➡️ ✅ ⚖️ 💭 👉 🔄 ↩️ ⬆️',
+  '👇 👉 ❓ ❔ 💬 ❓ 🧭 👀 🧥 ⬅️',
+  '📖 📚 🎯 🏁 1️⃣ 🔥 2️⃣ 🥇 ⏰ 🔚',
+  '🏫 ✍️ 📝 🏷️ 👤 🪜 📚 📖 🏋️ 🧪',
+  '🎁 🙇 ❤️ ✅ 🛡️ 🤝 🦁 💪 🐝 🛠️'
+].map(row => row.split(/\s+/));
+CHINESE_UNITS.forEach((unit, unitIndex) => unit[2].forEach((item, itemIndex) => { item[3] = CHINESE_VISUAL_SETS[unitIndex]?.[itemIndex] || item[3]; }));
+
 const LOGIC_UNITS = [
   ['找找相同','从颜色、形状和方向发现完全相同','same','👀'],
   ['发现不同','比较明显特征，找出不一样的一个','different','🔎'],

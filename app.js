@@ -1,7 +1,7 @@
 const STORAGE_KEY = 'sprout-learning-v2';
 const CONTENT_SCHEMA_VERSION = 3;
 const todayKey = () => new Date().toISOString().slice(0, 10);
-const defaultState = { schemaVersion: CONTENT_SCHEMA_VERSION, stars: 0, sound: true, streak: 0, lastStudy: '', studyDates: [], totalMinutes: 0, sessions: 0, mastery: {}, gameProgress: {}, entryStages: { english: 0, chinese: 0, logic: 0 }, activeSubject: 'english' };
+const defaultState = { schemaVersion: CONTENT_SCHEMA_VERSION, stars: 0, sound: true, streak: 0, lastStudy: '', studyDates: [], totalMinutes: 0, sessions: 0, mastery: {}, gameProgress: {}, entryStages: { english: 0, chinese: 0, logic: 0 }, viewStages: { english: 0, chinese: 0, logic: 0 }, activeSubject: 'english' };
 let saved = {};
 try { saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); } catch (_) { saved = {}; }
 const needsContentMigration = (saved.schemaVersion || 0) < CONTENT_SCHEMA_VERSION;
@@ -10,10 +10,11 @@ if (needsContentMigration) {
   saved.gameProgress = Object.fromEntries(Object.entries(saved.gameProgress || {}).filter(([key]) => !key.startsWith('logic-')));
   saved.schemaVersion = CONTENT_SCHEMA_VERSION;
 }
-const state = { ...defaultState, ...saved, mastery: saved.mastery || {}, gameProgress: saved.gameProgress || {}, entryStages: { ...defaultState.entryStages, ...(saved.entryStages || {}) } };
+const state = { ...defaultState, ...saved, mastery: saved.mastery || {}, gameProgress: saved.gameProgress || {}, entryStages: { ...defaultState.entryStages, ...(saved.entryStages || {}) }, viewStages: { ...defaultState.viewStages, ...(saved.viewStages || saved.entryStages || {}) } };
 let lesson = null;
 let activeGameSubject = 'english';
 let gameSession = null;
+let voiceRecording = null;
 const SUBJECT_WORLDS = { english: 'english-world', chinese: 'chinese-world', logic: 'logic-world' };
 
 const $ = selector => document.querySelector(selector);
@@ -27,9 +28,52 @@ if (needsContentMigration) saveState();
 function getStats(id) { return state.mastery[id] || { score: 0, attempts: 0, correct: 0, streak: 0, due: 0, last: '' }; }
 function masteryLabel(score) { return ['未学习', '初识', '练习中', '较熟悉', '已掌握'][score] || '未学习'; }
 function showToast(text) { const toast = $('#toast'); toast.textContent = text; toast.classList.add('show'); clearTimeout(showToast.timer); showToast.timer = setTimeout(() => toast.classList.remove('show'), 1600); }
-function speak(text, lang = 'zh-CN') { if (!state.sound || !('speechSynthesis' in window)) return; speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.lang = lang; u.rate = lang.startsWith('en') ? 0.72 : 0.84; u.pitch = 1.08; speechSynthesis.speak(u); }
+function celebrate(anchor, symbols = ['⭐','✨','⭐','🌟','✨','⭐']) {
+  if (!anchor || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+  const rect = anchor.getBoundingClientRect(); const burst = document.createElement('div'); burst.className = 'celebration-burst'; burst.setAttribute('aria-hidden','true');
+  burst.style.left = `${rect.left + rect.width / 2}px`; burst.style.top = `${rect.top + rect.height / 2}px`;
+  burst.innerHTML = symbols.map((symbol,index) => { const angle = Math.PI * 2 * index / symbols.length - Math.PI / 2; const distance = 52 + index % 3 * 14; return `<span style="--burst-x:${Math.round(Math.cos(angle) * distance)}px;--burst-y:${Math.round(Math.sin(angle) * distance)}px;--burst-delay:${index * 28}ms">${symbol}</span>`; }).join('');
+  document.body.appendChild(burst); setTimeout(() => burst.remove(),1000);
+}
+const speechPlayback = { token:0, timer:null, voices:[] };
+function refreshSpeechVoices() { if ('speechSynthesis' in window) speechPlayback.voices = speechSynthesis.getVoices(); }
+function speechVoiceScore(voice, lang) {
+  const locale = (voice.lang || '').toLowerCase(); const target = lang.toLowerCase(); const base = target.split('-')[0]; const name = voice.name || '';
+  if (!locale.startsWith(base)) return -1000;
+  let score = locale === target ? 100 : 55;
+  if (/natural|neural|online|premium|google|samantha|ava|aria|jenny|xiaoxiao|xiaoyi|ting-ting|meijia|sin-ji/i.test(name)) score += 35;
+  if (/compact|espeak/i.test(name)) score -= 25;
+  return score;
+}
+function preferredSpeechVoice(lang, voices = speechPlayback.voices) { return voices.filter(voice => speechVoiceScore(voice,lang) > -1000).sort((a,b) => speechVoiceScore(b,lang) - speechVoiceScore(a,lang))[0] || null; }
+function speechChunks(text) {
+  const clean = String(text || '').replace(/<[^>]+>/g,' ').replace(/&nbsp;/g,' ').replace(/\s+/g,' ').trim();
+  return clean.match(/[^.!?。！？]+[.!?。！？]?/g)?.map(part => part.trim()).filter(Boolean) || [];
+}
+function stopSpeech() {
+  speechPlayback.token += 1; clearTimeout(speechPlayback.timer);
+  if ('speechSynthesis' in window) speechSynthesis.cancel();
+}
+function speak(text, lang = 'zh-CN') {
+  if (!state.sound || !('speechSynthesis' in window) || !('SpeechSynthesisUtterance' in window)) return;
+  const chunks = speechChunks(text); if (!chunks.length) return;
+  stopSpeech(); refreshSpeechVoices(); const token = speechPlayback.token; const english = lang.toLowerCase().startsWith('en');
+  const play = index => {
+    if (token !== speechPlayback.token || index >= chunks.length) return;
+    const utterance = new SpeechSynthesisUtterance(chunks[index]); const voice = preferredSpeechVoice(lang);
+    utterance.lang = voice?.lang || lang; utterance.voice = voice; utterance.rate = english ? 0.84 : 0.92; utterance.pitch = 1; utterance.volume = 1;
+    utterance.onend = () => { speechPlayback.timer = setTimeout(() => play(index + 1), english ? 120 : 80); };
+    utterance.onerror = event => { if (event.error !== 'canceled' && token === speechPlayback.token) speechPlayback.timer = setTimeout(() => play(index + 1), 80); };
+    speechSynthesis.speak(utterance);
+  };
+  speechPlayback.timer = setTimeout(() => play(0), 70);
+}
+refreshSpeechVoices();
+if ('speechSynthesis' in window) speechSynthesis.addEventListener?.('voiceschanged', refreshSpeechVoices);
 
 function navigate(view) {
+  stopSpeech();
+  cancelVoiceRecording();
   $$('.view').forEach(node => node.classList.toggle('active', node.dataset.view === view));
   $$('.bottom-nav [data-nav]').forEach(button => button.classList.toggle('active', button.dataset.nav === view || (['chinese-world','english-world','logic-world'].includes(view) && button.dataset.nav === 'curriculum')));
   $('.bottom-nav').style.display = view === 'lesson' ? 'none' : 'grid';
@@ -43,10 +87,28 @@ function navigate(view) {
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
+const STAGE_STARTS = { english: [0,10,20,30], chinese: [0,10,20,30,40], logic: [0,12,24] };
+
+function stageStartFor(subject, unitIndex) {
+  return [...STAGE_STARTS[subject]].reverse().find(start => unitIndex >= start) || 0;
+}
+
+function stageBounds(subject, stageStart = stageStartFor(subject, currentUnitIndex(subject))) {
+  const starts = STAGE_STARTS[subject]; const position = Math.max(0, starts.indexOf(stageStart));
+  return [starts[position], starts[position + 1] ?? CURRICULUM[subject].units.length];
+}
+
 function subjectProgress(subject) {
   const items = allSubjectItems(subject);
   const points = items.reduce((sum, item) => sum + getStats(item.id).score, 0);
-  return Math.round(points / (items.length * 4) * 100);
+  return items.length ? Math.round(points / (items.length * 4) * 100) : 0;
+}
+
+function stageProgress(subject, stageStart = stageStartFor(subject, currentUnitIndex(subject))) {
+  const [start,end] = stageBounds(subject,stageStart);
+  const items = allSubjectItems(subject).filter(item => item.unitIndex >= start && item.unitIndex < end);
+  const points = items.reduce((sum,item) => sum + getStats(item.id).score,0);
+  return items.length ? Math.round(points / (items.length * 4) * 100) : 0;
 }
 
 function unitProgress(subject, unitIndex) {
@@ -99,8 +161,8 @@ function renderHome() {
   $('#todayStatus').textContent = studiedToday ? '今天已完成，可继续巩固' : '等待开始';
   $('#startDaily').querySelector('span').textContent = studiedToday ? '继续巩固学习' : '开始今日学习';
   $('#subjectCards').innerHTML = Object.entries(CURRICULUM).map(([key, subject]) => {
-    const unitIndex = currentUnitIndex(key); const progress = subjectProgress(key); const unit = subject.units[unitIndex];
-    return `<button class="subject-card" data-subject-card="${key}" style="--subject-color:${subject.color}"><span class="subject-card-head"><span class="subject-icon">${subject.icon}</span><span class="level-badge">第 ${unitIndex + 1} / ${subject.units.length} 单元</span></span><h3>${subject.name}</h3><p>${subject.description}</p><div class="mastery-row"><span class="mini-track"><i style="--value:${progress}%"></i></span><span>${progress}%</span></div><p><b>正在学习：</b>${unit.title}</p></button>`;
+    const unitIndex = currentUnitIndex(key); const progress = subjectProgress(key); const currentStageProgress = stageProgress(key); const unit = subject.units[unitIndex];
+    return `<button class="subject-card" data-subject-card="${key}" style="--subject-color:${subject.color}"><span class="subject-card-head"><span class="subject-icon">${subject.icon}</span><span class="level-badge">第 ${unitIndex + 1} / ${subject.units.length} 单元</span></span><h3>${subject.name}</h3><p>${subject.description}</p><div class="mastery-row"><span class="mini-track"><i style="--value:${currentStageProgress}%"></i></span><span>本阶段 ${currentStageProgress}%</span></div><p class="course-total-progress">全课程累计 ${progress}%</p><p><b>正在学习：</b>${unit.title}</p></button>`;
   }).join('');
   renderWeek();
 }
@@ -126,10 +188,11 @@ function renderCurriculum() {
   $('#unitList').innerHTML = Object.entries(CURRICULUM).map(([key, subject]) => {
     const progress = subjectProgress(key);
     const unitIndex = currentUnitIndex(key);
+    const currentStageProgress = stageProgress(key);
     const unit = subject.units[unitIndex];
     const itemCount = allSubjectItems(key).length;
     const buttonText = progress ? '继续探索' : '进入世界';
-    return `<article class="course-portal ${key} ${key === state.activeSubject ? 'active' : ''}" style="--portal-color:${subject.color}"><div class="portal-toy" aria-hidden="true"><span>${subject.icon}</span><small>${subject.units.length} 个单元</small></div><div class="portal-copy"><span class="portal-kicker">${key === 'english' ? '听说启蒙' : key === 'chinese' ? '高频识字' : '数学思维'}</span><h2>${subject.name}</h2><p>${subject.description}</p><div class="portal-current"><b>正在学习</b><span>第 ${unitIndex + 1} 单元 · ${unit.title}</span></div><div class="portal-progress"><span class="mini-track"><i style="--value:${progress}%"></i></span><strong>${progress}%</strong></div><small class="portal-total">共 ${itemCount} 个知识点</small></div><button class="portal-enter" data-open-world="${key}">${buttonText}<span aria-hidden="true">→</span></button></article>`;
+    return `<article class="course-portal ${key} ${key === state.activeSubject ? 'active' : ''}" style="--portal-color:${subject.color}"><div class="portal-toy" aria-hidden="true"><span>${subject.icon}</span><small>${subject.units.length} 个单元</small></div><div class="portal-copy"><span class="portal-kicker">${key === 'english' ? '听说启蒙' : key === 'chinese' ? '高频识字' : '数学思维'}</span><h2>${subject.name}</h2><p>${subject.description}</p><div class="portal-current"><b>正在学习</b><span>第 ${unitIndex + 1} 单元 · ${unit.title}</span></div><div class="portal-progress"><span class="mini-track"><i style="--value:${currentStageProgress}%"></i></span><strong>本阶段 ${currentStageProgress}%</strong></div><small class="portal-total">全课程 ${progress}% · 共 ${itemCount} 个知识点</small></div><button class="portal-enter" data-open-world="${key}">${buttonText}<span aria-hidden="true">→</span></button></article>`;
   }).join('');
 }
 
@@ -142,16 +205,17 @@ function renderChineseWorld() {
     30:['第四阶段 · 阅读拓展','301–400 字','扩展空间、特征、自然、社区和健康词汇'],
     40:['第五阶段 · 幼小衔接','401–500 字','衔接数学、笔画、课堂指令和短文阅读']
   };
-  const selectedStage = state.entryStages.chinese || 0;
-  $('#chineseStagePicker').innerHTML = `<span>学习起点</span>${Object.entries(stages).map(([index, stage]) => `<button class="${Number(index) === selectedStage ? 'active' : ''}" data-entry-stage="chinese:${index}"><b>${stage[1]}</b><small>${stage[0].split(' · ')[1]}</small></button>`).join('')}`;
-  $('#characterMap').innerHTML = subject.units.map((unit, index) => {
+  const selectedStage = state.viewStages.chinese || 0;
+  $('#chineseStagePicker').innerHTML = `<span>浏览课程阶段</span>${Object.entries(stages).map(([index, stage]) => `<button class="${Number(index) === selectedStage ? 'active' : ''}" data-view-stage="chinese:${index}"><b>${stage[1]}</b><small>${stage[0].split(' · ')[1]}</small></button>`).join('')}`;
+  $('#characterMap').innerHTML = subject.units.map((unit, index) => ({ unit,index })).filter(({index}) => index >= selectedStage && index < selectedStage + 10).map(({unit,index}) => {
     const progress = unitProgress('chinese', index);
     const unlocked = unitUnlocked('chinese', index);
     const stateClass = !unlocked ? 'locked' : progress >= 80 ? 'mastered' : index === currentUnitIndex('chinese') ? 'current' : '';
     const icon = unlocked ? unit.items[0].emoji : '🔒';
     const stage = stages[index];
-    const banner = stage ? `<div class="character-stage-banner" data-stage-anchor="chinese:${index}"><span>${stage[1]}</span><div><small>${stage[0]}</small><h2>${stage[2]}</h2></div></div>` : '';
-    return `${banner}<article class="map-stop ${index % 2 ? 'right' : 'left'} ${stateClass}"><span class="map-number">${progress >= 80 ? '✓' : index + 1}</span><div class="map-island"><span class="map-icon">${icon}</span><div><small>第 ${index + 1} 站 · 10 个字</small><h2>${unit.title}</h2><p>${unit.goal}</p></div></div><div class="map-progress"><i style="width:${progress}%"></i></div><button data-start-unit="chinese:${index}" ${!unlocked ? 'disabled' : ''}>${progress ? '继续探索' : '出发识字'}</button></article>`;
+    const banner = stage ? `<div class="character-stage-banner" data-stage-anchor="chinese:${index}"><span>${stage[1]}</span><div><small>${stage[0]}</small><h2>${stage[2]}</h2><button class="stage-entry-action" data-set-entry-stage="chinese:${index}" ${state.entryStages.chinese === index ? 'disabled' : ''}>${state.entryStages.chinese === index ? '当前学习起点' : '从本阶段开始'}</button></div></div>` : '';
+    const preview = unlocked ? `<div class="unit-sound-preview">${unit.items.slice(0,4).map(item => `<button data-speak-now="${item.word}" data-lang="zh-CN" title="听${item.word}的读音"><span>${item.emoji}</span><b>${item.word}</b></button>`).join('')}</div>` : '';
+    return `${banner}<article class="map-stop ${stateClass}"><span class="map-number">${progress >= 80 ? '✓' : index + 1}</span><div class="map-island"><span class="map-icon">${icon}</span><div><small>第 ${index + 1} 站 · 10 个字</small><h2>${unit.title}</h2><p>${unit.goal}</p>${preview}</div></div><div class="map-progress"><i style="width:${progress}%"></i></div><button data-start-unit="chinese:${index}" ${!unlocked ? 'disabled' : ''}>${progress ? '继续探索' : '出发识字'}</button></article>`;
   }).join('');
 }
 
@@ -163,15 +227,16 @@ function renderEnglishWorld() {
     20: ['第三阶段 · 大班 5–6 岁', '故事阅读', '人物、地点、问答和顺序词，尝试复述迷你绘本'],
     30: ['第四阶段 · 幼小衔接', '自然拼读', '字母音、基础音标、CVC 拼读、高频词与可解码阅读']
   };
-  const selectedStage = state.entryStages.english || 0;
-  $('#englishStagePicker').innerHTML = `<span>学习起点</span>${Object.entries(stages).map(([index, stage]) => `<button class="${Number(index) === selectedStage ? 'active' : ''}" data-entry-stage="english:${index}"><b>${stage[1]}</b><small>${stage[0].split(' · ')[1]}</small></button>`).join('')}`;
-  $('#englishBookMap').innerHTML = subject.units.map((unit, index) => {
+  const selectedStage = state.viewStages.english || 0;
+  $('#englishStagePicker').innerHTML = `<span>浏览课程阶段</span>${Object.entries(stages).map(([index, stage]) => `<button class="${Number(index) === selectedStage ? 'active' : ''}" data-view-stage="english:${index}"><b>${stage[1]}</b><small>${stage[0].split(' · ')[1]}</small></button>`).join('')}`;
+  $('#englishBookMap').innerHTML = subject.units.map((unit, index) => ({ unit,index })).filter(({index}) => index >= selectedStage && index < selectedStage + 10).map(({unit,index}) => {
     const progress = unitProgress('english', index); const unlocked = unitUnlocked('english', index);
     const stateClass = !unlocked ? 'locked' : progress >= 80 ? 'mastered' : index === currentUnitIndex('english') ? 'current' : '';
     const coverIcons = unit.items.slice(0, 3).map(item => item.emoji).join('');
     const stage = stages[index];
-    const banner = stage ? `<div class="english-stage-banner" data-stage-anchor="english:${index}"><span>${stage[1]}</span><div><small>${stage[0]}</small><h2>${stage[2]}</h2></div></div>` : '';
-    return `${banner}<article class="english-book ${stateClass}"><div class="book-cover"><span>${unlocked ? coverIcons : '🔒'}</span><small>LEVEL ${index + 1}</small></div><div class="book-info"><small>${index < 10 ? '听说启蒙' : index < 20 ? '情境短句' : index < 30 ? '故事表达' : '拼读阅读'}</small><h2>${unit.title}</h2><p>${unit.goal}</p><em>${unit.focus}</em><div class="book-progress"><i style="width:${progress}%"></i></div><span>${progress}% · ${masteryLabel(Math.round(progress / 25))}</span></div><button data-start-unit="english:${index}" ${!unlocked ? 'disabled' : ''}>${progress ? '继续学习' : index >= 30 ? '开始拼读' : '开始故事'}</button></article>`;
+    const banner = stage ? `<div class="english-stage-banner" data-stage-anchor="english:${index}"><span>${stage[1]}</span><div><small>${stage[0]}</small><h2>${stage[2]}</h2><button class="stage-entry-action" data-set-entry-stage="english:${index}" ${state.entryStages.english === index ? 'disabled' : ''}>${state.entryStages.english === index ? '当前学习起点' : '从本阶段开始'}</button></div></div>` : '';
+    const preview = unlocked ? `<div class="unit-sound-preview english-preview">${unit.items.slice(0,3).map(item => `<button data-speak-now="${item.word}" data-lang="en-US" title="听 ${item.word}"><span>${item.emoji}</span><b>${item.word}</b></button>`).join('')}</div>` : '';
+    return `${banner}<article class="english-book ${stateClass}"><div class="book-cover"><span>${unlocked ? coverIcons : '🔒'}</span><small>LEVEL ${index + 1}</small></div><div class="book-info"><small>${index < 10 ? '听说启蒙' : index < 20 ? '情境短句' : index < 30 ? '故事表达' : '拼读阅读'}</small><h2>${unit.title}</h2><p>${unit.goal}</p><em>${unit.focus}</em>${preview}<div class="book-progress"><i style="width:${progress}%"></i></div><span>${progress}% · ${masteryLabel(Math.round(progress / 25))}</span></div><button data-start-unit="english:${index}" ${!unlocked ? 'disabled' : ''}>${progress ? '继续学习' : index >= 30 ? '开始拼读' : '开始故事'}</button></article>`;
   }).join('');
 }
 
@@ -182,13 +247,14 @@ function renderLogicWorld() {
     12: ['第二阶段 · 中班 4–5 岁', '逻辑思维', '1–20 数感、排序、规律、空间与简单运算'],
     24: ['第三阶段 · 大班 5–6 岁', '综合思维', '1–100 数感、20 以内运算、图形、测量与统计']
   };
-  const selectedStage = state.entryStages.logic || 0;
-  $('#logicStagePicker').innerHTML = `<span>学习起点</span>${Object.entries(stages).map(([index, stage]) => `<button class="${Number(index) === selectedStage ? 'active' : ''}" data-entry-stage="logic:${index}"><b>${stage[1]}</b><small>${stage[0].split(' · ')[1]}</small></button>`).join('')}`;
-  $('#logicPlanetMap').innerHTML = subject.units.map((unit, index) => {
+  const selectedStage = state.viewStages.logic || 0;
+  const [,stageEnd] = stageBounds('logic',selectedStage);
+  $('#logicStagePicker').innerHTML = `<span>浏览课程阶段</span>${Object.entries(stages).map(([index, stage]) => `<button class="${Number(index) === selectedStage ? 'active' : ''}" data-view-stage="logic:${index}"><b>${stage[1]}</b><small>${stage[0].split(' · ')[1]}</small></button>`).join('')}`;
+  $('#logicPlanetMap').innerHTML = subject.units.map((unit, index) => ({unit,index})).filter(({index}) => index >= selectedStage && index < stageEnd).map(({unit,index}) => {
     const progress = unitProgress('logic', index); const unlocked = unitUnlocked('logic', index);
     const stateClass = !unlocked ? 'locked' : progress >= 80 ? 'mastered' : index === currentUnitIndex('logic') ? 'current' : '';
     const stage = stages[index];
-    const banner = stage ? `<div class="logic-stage-banner" data-stage-anchor="logic:${index}"><span>${stage[1]}</span><div><small>${stage[0]}</small><h2>${stage[2]}</h2></div></div>` : '';
+    const banner = stage ? `<div class="logic-stage-banner" data-stage-anchor="logic:${index}"><span>${stage[1]}</span><div><small>${stage[0]}</small><h2>${stage[2]}</h2><button class="stage-entry-action" data-set-entry-stage="logic:${index}" ${state.entryStages.logic === index ? 'disabled' : ''}>${state.entryStages.logic === index ? '当前学习起点' : '从本阶段开始'}</button></div></div>` : '';
     return `${banner}<article class="logic-planet ${stateClass}"><div class="planet-orb"><span>${unlocked ? unit.icon : '🔒'}</span><b>${progress >= 80 ? '✓' : index + 1}</b></div><div class="planet-info"><small>思维星 ${index + 1} · ${index < 12 ? '感知' : index < 24 ? '逻辑' : '综合'}</small><h2>${unit.title}</h2><p>${unit.goal}</p><div class="planet-progress"><i style="width:${progress}%"></i></div><span>${progress}% · ${masteryLabel(Math.round(progress / 25))}</span></div><button data-start-unit="logic:${index}" ${!unlocked ? 'disabled' : ''}>${progress ? '继续探索' : '登陆星球'}</button></article>`;
   }).join('');
 }
@@ -272,10 +338,10 @@ function replaceEnglishWord(text, word, replacement) {
 }
 
 function speechMatches(text, target) {
-  const normalize = value => value.toLowerCase().replace(/[^a-z0-9' ]/g, ' ').replace(/\s+/g, ' ').trim();
+  const normalize = value => value.toLowerCase().replace(/[^\p{L}\p{N}' ]/gu, ' ').replace(/\s+/g, ' ').trim();
   const heard = normalize(text); const expected = normalize(target);
   if (!heard || !expected) return false;
-  return ` ${heard} `.includes(` ${expected} `);
+  return /[\u3400-\u9fff]/u.test(expected) ? heard.includes(expected) : ` ${heard} `.includes(` ${expected} `);
 }
 
 function renderEnglishStory(item) {
@@ -285,7 +351,7 @@ function renderEnglishStory(item) {
 }
 
 function renderEnglishSpeak(item) {
-  $('#lessonContent').innerHTML = `${englishStageNav('说')}<span class="task-label">开口模仿</span><div class="speak-hero"><span>👄</span><b>${item.word}</b><small>${item.phonics || item.meaning}</small></div><p class="question-hint">先听一次，再像小狐狸一样说出来。系统会耐心等你。</p><button class="listen-round" data-speak-now="${item.word}" data-lang="en-US">🔊</button><div class="speaking-actions"><button class="microphone-button" data-start-speaking="${item.word}">🎙️ 点一下，说 ${item.word}</button><button class="soft-button" data-finish-speaking>我已经跟读了</button></div><div id="speakingFeedback"></div>`;
+  $('#lessonContent').innerHTML = `${englishStageNav('说')}<span class="task-label">开口模仿</span><div class="speak-hero"><span>👄</span><b>${item.word}</b><small>${item.phonics || item.meaning}</small></div><p class="question-hint">先听一次，再像小狐狸一样说出来。录好后可以回听和重录。</p><button class="listen-round" data-speak-now="${item.word}" data-lang="en-US">🔊</button><div class="speaking-actions"><button class="microphone-button" data-start-speaking="${item.word}" data-speaking-lang="en-US">🎙️ 点一下，说 ${item.word}</button><button class="soft-button" data-finish-speaking>我已经跟读了</button></div><div id="speakingFeedback"></div>`;
   speak(item.word, 'en-US');
 }
 
@@ -296,17 +362,70 @@ function renderEnglishRead(item) {
   $('#lessonContent').innerHTML = `${englishStageNav('读')}<span class="task-label">${item.unitIndex >= 30 ? '可解码小读本' : '迷你分级绘本'}</span><div class="mini-reader"><div class="reader-picture"><span class="reader-fox">🦊</span><span>${item.emoji}</span><i>${item.unit.title}</i></div><div class="reader-pages">${lines.map((line, index) => `<p><small>${index + 1}</small>${mark(line)}</p>`).join('')}</div><button data-speak-now="${narration}" data-lang="en-US">🔊 点读整页</button></div><p class="teach-note">先看图猜意思，再点读整页。能听懂并找到目标词，就是有效阅读；不要求逐字翻译。</p><button class="lesson-next" data-next-task>读完这一页</button>`;
 }
 
-function startSpeakingCheck(target) {
-  const feedback = $('#speakingFeedback'); const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!Recognition) { feedback.innerHTML = `<div class="speaking-feedback gentle">勇敢开口就是进步！当前浏览器不支持自动识别，请家长听一听。</div><button class="lesson-next" data-next-task>继续</button>`; return; }
-  const recognition = new Recognition(); recognition.lang = 'en-US'; recognition.interimResults = false; recognition.maxAlternatives = 3;
-  feedback.innerHTML = `<div class="speaking-feedback listening">正在听你说…</div>`;
-  recognition.onresult = event => {
-    const heard = [...event.results[0]].map(result => result.transcript.toLowerCase()); const matched = heard.some(text => speechMatches(text, target));
-    feedback.innerHTML = `<div class="speaking-feedback ${matched ? 'success' : 'gentle'}">${matched ? `听到了 ${target}，说得真清楚！` : `听到了“${heard[0]}”。再听一次，慢慢说 ${target}。`}</div><button class="lesson-next" data-next-task>${matched ? '继续' : '这次先通过'}</button>`;
+function escapeHTML(value) { return String(value).replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char])); }
+
+function cancelVoiceRecording() {
+  const session = voiceRecording; if (!session) return;
+  session.canceled = true; clearTimeout(session.timer);
+  try { session.recognition?.abort(); } catch (_) {}
+  try { if (session.recorder?.state !== 'inactive') session.recorder.stop(); } catch (_) {}
+  session.stream?.getTracks().forEach(track => track.stop());
+  if (session.url) URL.revokeObjectURL(session.url);
+  voiceRecording = null;
+}
+
+function finishVoiceRecording(message = '录好了，先听听自己的声音，再决定要不要重录。', className = 'gentle') {
+  const session = voiceRecording; if (!session || session.finishing) return;
+  session.finishing = true; session.message = message; session.className = className; clearTimeout(session.timer);
+  try { session.recognition?.abort(); } catch (_) {}
+  try { if (session.recorder.state !== 'inactive') session.recorder.stop(); } catch (_) { session.stream.getTracks().forEach(track => track.stop()); }
+}
+
+function renderVoiceRecordingReview(session) {
+  if (session.canceled || voiceRecording !== session) return;
+  const feedback = $('#speakingFeedback'); if (!feedback) return;
+  feedback.innerHTML = `<div class="speaking-feedback ${session.className}">${session.message}<small class="recognition-note">自动识别只帮助发现是否说出了目标词，不代表专业发音评分。</small></div><div class="recording-review"><div><span>🎧</span><div><b>听听我的声音</b><small>先听示范，再回听自己：目标词是否完整、声音是否清楚</small></div></div><audio id="recordedVoice" controls preload="metadata" src="${session.url}"></audio><div><button class="soft-button" data-speak-now="${escapeHTML(session.target)}" data-lang="${session.lang}">🔊 听示范</button><button class="soft-button" data-play-recording>▶ 回听录音</button><button class="microphone-button" data-record-again>🎙️ 再录一次</button><button class="lesson-next" data-next-task>继续学习</button></div></div>`;
+}
+
+async function startSpeakingCheck(target, lang = 'en-US') {
+  cancelVoiceRecording(); stopSpeech();
+  const feedback = $('#speakingFeedback');
+  if (!navigator.mediaDevices?.getUserMedia || !('MediaRecorder' in window)) {
+    feedback.innerHTML = `<div class="speaking-feedback gentle">当前浏览器不能保存录音。请换用最新版 Chrome 或 Safari，并允许麦克风权限。</div><button class="lesson-next" data-next-task>继续</button>`; return;
+  }
+  feedback.innerHTML = `<div class="speaking-feedback listening">正在申请麦克风，请允许后读出 <b>${escapeHTML(target)}</b>…</div>`;
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:true, noiseSuppression:true, autoGainControl:true } }); }
+  catch (_) { feedback.innerHTML = `<div class="speaking-feedback gentle">没有获得麦克风权限。可以在浏览器地址栏的网站设置中允许麦克风后再试。</div><button class="lesson-next" data-next-task>继续</button>`; return; }
+
+  let recorder;
+  try { recorder = new MediaRecorder(stream); }
+  catch (_) { stream.getTracks().forEach(track => track.stop()); feedback.innerHTML = `<div class="speaking-feedback gentle">这台设备暂时不能创建录音文件，请更新浏览器后再试。</div><button class="lesson-next" data-next-task>继续</button>`; return; }
+  const session = { target,lang,stream,recorder,chunks:[],recognition:null,url:'',message:'',className:'gentle',finishing:false,canceled:false,timer:null };
+  voiceRecording = session;
+  recorder.ondataavailable = event => { if (event.data.size) session.chunks.push(event.data); };
+  recorder.onstop = () => {
+    stream.getTracks().forEach(track => track.stop()); if (session.canceled || voiceRecording !== session) return;
+    const blob = new Blob(session.chunks,{type:recorder.mimeType || 'audio/webm'}); session.url = URL.createObjectURL(blob); renderVoiceRecordingReview(session);
   };
-  recognition.onerror = () => { feedback.innerHTML = `<div class="speaking-feedback gentle">没有听清也没关系，愿意开口就很棒。</div><button class="lesson-next" data-next-task>继续</button>`; };
-  try { recognition.start(); } catch (_) { recognition.onerror(); }
+  recorder.start();
+  feedback.innerHTML = `<div class="speaking-feedback listening"><span class="recording-pulse"></span>正在录音：请清楚地说 <b>${escapeHTML(target)}</b></div><button class="soft-button stop-recording" data-stop-recording>■ 说完了</button>`;
+
+  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!Recognition) {
+    session.message = '录音完成。当前浏览器不能自动判断，请回听后和示范音做比较。';
+    session.timer = setTimeout(() => finishVoiceRecording(session.message,'gentle'),5000); return;
+  }
+  const recognition = new Recognition(); session.recognition = recognition; recognition.lang = lang; recognition.interimResults = false; recognition.maxAlternatives = 5;
+  recognition.onresult = event => {
+    const heard = [...event.results[0]].map(result => result.transcript.toLowerCase()); const matched = heard.some(text => speechMatches(text,target));
+    const heardText = escapeHTML(heard[0] || '');
+    finishVoiceRecording(matched ? `系统识别到了“${heardText}”。再听示范并回听自己的声音吧！` : `系统听到“${heardText}”，暂时没有识别出目标词“${escapeHTML(target)}”。回听后可以慢慢再录一次。`,matched ? 'success' : 'gentle');
+  };
+  recognition.onerror = event => { if (!session.finishing) finishVoiceRecording(event.error === 'no-speech' ? '没有听到清楚的单词。先回听录音，再慢慢重录一次。' : '自动判断暂时不可用，请回听录音后自己比较。','gentle'); };
+  recognition.onend = () => { if (!session.finishing) finishVoiceRecording('录音完成。自动判断没有返回结果，请回听后和示范音比较。','gentle'); };
+  try { recognition.start(); } catch (_) { session.timer = setTimeout(() => finishVoiceRecording('录音完成，请回听后和示范音比较。','gentle'),5000); return; }
+  session.timer = setTimeout(() => finishVoiceRecording('录音已自动结束。请回听自己的声音，再决定是否重录。','gentle'),6500);
 }
 
 function chineseStageNav(active) {
@@ -371,8 +490,20 @@ function renderLogicExplain(task) {
   $('#lessonContent').innerHTML = `${logicStageNav('说')}<span class="task-label">小老师说方法</span><span class="explain-robot">🤖</span><h2 class="question-title">刚才你是怎么想的？</h2><p class="question-hint">选一句理由，再跟着熊猫团团大声说出来。</p><div class="reason-options">${shuffle(reasons.map((text, index) => ({ text, correct: index === 0 }))).map((reason, index) => `<button data-reason-index="${index}" data-reason-correct="${reason.correct}">${reason.text}</button>`).join('')}</div><div id="reasonFeedback"></div>`;
 }
 
+const CHINESE_SCENE_MOTIFS = ['🌱','✨','☁️','🌈','🍃','🫧','🌼','⭐','🪁','🪨'];
+
+function chineseSceneVisual(item) {
+  const match = item.id.match(/chinese-(\d+)-(\d+)/); const unitIndex = Number(match?.[1] || 1) - 1; const itemIndex = Number(match?.[2] || 1) - 1;
+  const seed = unitIndex * 10 + itemIndex; const hue = (seed * 47 + 36) % 360; const motif = CHINESE_SCENE_MOTIFS[itemIndex];
+  const props = Array.from({length:itemIndex % 3 + 1},() => `<span>${motif}</span>`).join('');
+  return { key:seed + 1, style:`--scene-hue:${hue};--scene-hue-2:${(hue + 42) % 360};--scene-shift:${(seed % 7) - 3}px`, props, unitIcon:item.unit.icon };
+}
+
 function renderChinesePlay(item) {
-  $('#lessonContent').innerHTML = `${chineseStageNav('玩')}<span class="task-label">图景猜字</span><div class="character-story-scene"><span class="story-sun">☀️</span><span class="story-visual">${item.emoji}</span><span class="story-grass">♧ ♧ ♧ ♧ ♧</span></div><h2 class="question-title">猜一猜，这幅图里藏着哪个字？</h2><p class="question-hint">先说出你看到了什么，再揭开答案。</p><button class="lesson-next reveal-character" data-reveal-character="${item.word}">揭开小秘密</button><div id="characterReveal"></div>`;
+  const scene = chineseSceneVisual(item);
+  const sceneMode = item.word === '月' ? 'night' : item.word === '日' ? 'day' : 'semantic-scene';
+  const skyDetail = item.word === '月' ? '✦　✧　✦' : item.word === '日' ? '☁️' : CHINESE_SCENE_MOTIFS[(scene.key + 3) % CHINESE_SCENE_MOTIFS.length];
+  $('#lessonContent').innerHTML = `${chineseStageNav('玩')}<span class="task-label">图景猜字</span><div class="character-story-scene ${sceneMode}" style="${scene.style}" data-scene-key="${scene.key}"><span class="story-sky-detail">${skyDetail}</span><span class="story-unit-symbol">${scene.unitIcon}</span><span class="story-visual">${item.emoji}</span><span class="story-scene-props">${scene.props}</span><span class="story-grass">♧ ♧ ♧ ♧ ♧</span></div><h2 class="question-title">猜一猜，这幅图里藏着哪个字？</h2><p class="question-hint">主图表示字义，小道具提示它属于哪个生活主题。</p><button class="lesson-next reveal-character" data-reveal-character="${item.word}" data-reveal-meaning="${escapeHTML(item.meaning)}" data-reveal-visual="${item.emoji}">揭开小秘密</button><div id="characterReveal"></div>`;
 }
 
 function renderChineseTrace(item) {
@@ -399,7 +530,8 @@ function setupTraceCanvas(character) {
 
 function renderChineseSpeak(item) {
   const phrases = chinesePhrases(item);
-  $('#lessonContent').innerHTML = `${chineseStageNav('说')}<span class="task-label">词语表达</span><div class="speak-character"><span>${item.word}</span><button class="listen-round" data-speak-now="${item.word}" data-lang="zh-CN">🔊</button></div><h2 class="question-title">带着“${item.word}”一起说</h2><div class="phrase-bubbles">${phrases.map(text => `<button data-speak-now="${text}" data-lang="zh-CN">${text} 🔊</button>`).join('')}</div><p class="teach-note">请孩子选一个词，大声说一遍。能在词语中认出汉字，才是真正会用了。</p><button class="lesson-next" data-next-task>我会说了</button>`;
+  const practicePhrase = phrases[0];
+  $('#lessonContent').innerHTML = `${chineseStageNav('说')}<span class="task-label">词语表达</span><div class="speak-character"><span>${item.word}</span><button class="listen-round" data-speak-now="${item.word}" data-lang="zh-CN">🔊</button></div><h2 class="question-title">带着“${item.word}”一起说</h2><div class="phrase-bubbles">${phrases.map(text => `<button data-speak-now="${text}" data-lang="zh-CN">${text} 🔊</button>`).join('')}</div><p class="teach-note">先听一听“${practicePhrase}”，再录下自己的声音。录完可以反复回听和重录。</p><div class="speaking-actions"><button class="microphone-button" data-start-speaking="${practicePhrase}" data-speaking-lang="zh-CN">🎙️ 录下“${practicePhrase}”</button><button class="soft-button" data-finish-speaking>我已经练习了</button></div><div id="speakingFeedback"></div>`;
 }
 
 function chinesePhrases(item) {
@@ -511,6 +643,7 @@ function handleAnswer(button, index) {
   const correct = index === task.question.correct; $$('.answer-button').forEach(b => b.disabled = true);
   if (correct) {
     button.classList.add('correct'); lesson.correct += 1; lesson.stars += 1; state.stars += 1; recordAnswer(task.item, true); speak('答对了，你真的理解了');
+    celebrate(button);
     $('#answerFeedback').innerHTML = `<div class="feedback-box">答对了！${masteryLabel(getStats(task.item.id).score)} <button class="lesson-next" data-next-task>继续</button></div>`;
   } else {
     button.classList.add('wrong'); const right = $$('.answer-button')[task.question.correct]; right.classList.add('correct'); lesson.wrong += 1; recordAnswer(task.item, false); speak('没关系，我们再学一次');
@@ -523,12 +656,13 @@ function handleAnswer(button, index) {
   $('#sessionStars').textContent = lesson.stars; saveState();
 }
 
-function nextTask() { lesson.index += 1; renderLesson(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+function nextTask() { cancelVoiceRecording(); lesson.index += 1; renderLesson(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
 
 function renderLessonSummary() {
   $('#lessonProgress').style.width = '100%';
   const reviewed = lesson.tasks.filter(t => t.kind === 'practice').length; const accuracy = Math.round(lesson.correct / Math.max(lesson.correct + lesson.wrong, 1) * 100);
   $('#lessonContent').innerHTML = `<span class="lesson-summary-emoji">${accuracy >= 80 ? '🌈' : '🌱'}</span><h2>${accuracy >= 80 ? '今天学得很扎实！' : '今天认真努力了！'}</h2><p class="teach-meaning">学习不是一次全对，而是每次都多懂一点。</p><div class="summary-list"><div class="summary-item"><span>完成练习</span><b>${reviewed} 次</b></div><div class="summary-item"><span>本次正确率</span><b>${accuracy}%</b></div><div class="summary-item"><span>获得星星</span><b>⭐ ${lesson.stars}</b></div></div><div class="summary-actions"><button class="soft-button" data-finish="curriculum">看看成长地图</button><button class="lesson-next" data-finish="home">完成学习</button></div>`;
+  requestAnimationFrame(() => celebrate($('.lesson-summary-emoji'),['⭐','🌈','✨','⭐','🌱','✨','⭐','🌟']));
   if (!lesson.completed) completeLesson();
 }
 
@@ -537,13 +671,15 @@ function completeLesson() {
   if (!state.studyDates.includes(todayKey())) state.studyDates.push(todayKey());
   const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1); const yesterdayKey = yesterday.toISOString().slice(0,10);
   if (state.lastStudy !== todayKey()) state.streak = state.lastStudy === yesterdayKey ? state.streak + 1 : 1;
-  state.lastStudy = todayKey(); saveState(); renderHome();
+  state.lastStudy = todayKey();
+  Object.keys(CURRICULUM).forEach(subject => { state.viewStages[subject] = stageStartFor(subject,currentUnitIndex(subject)); });
+  saveState(); renderHome();
 }
 
 function renderReport() {
   const items = allItems(); const attempts = Object.values(state.mastery).reduce((s,x)=>s+x.attempts,0); const correct = Object.values(state.mastery).reduce((s,x)=>s+x.correct,0); const mastered = items.filter(i=>getStats(i.id).score>=4).length;
   $('#reportStats').innerHTML = `<div class="stat-card"><strong>${state.studyDates.length}</strong><span>累计学习天数</span></div><div class="stat-card"><strong>${state.sessions}</strong><span>完成学习次数</span></div><div class="stat-card"><strong>${mastered}</strong><span>掌握知识点</span></div><div class="stat-card"><strong>${attempts ? Math.round(correct/attempts*100) : 0}%</strong><span>累计正确率</span></div>`;
-  $('#masteryReport').innerHTML = Object.entries(CURRICULUM).map(([key,s])=>{const p=subjectProgress(key);return `<div class="mastery-report-row"><b>${s.icon} ${s.short}</b><span class="report-track" style="--subject-color:${s.color}"><i style="--value:${p}%"></i></span><span>${p}%</span></div>`}).join('');
+  $('#masteryReport').innerHTML = Object.entries(CURRICULUM).map(([key,s])=>{const total=subjectProgress(key);const current=stageProgress(key);return `<div class="mastery-report-row"><b>${s.icon} ${s.short}</b><span class="report-track" style="--subject-color:${s.color}"><i style="--value:${current}%"></i></span><span><strong>本阶段 ${current}%</strong><small>全课程 ${total}%</small></span></div>`}).join('');
   const weak = items.filter(i=>getStats(i.id).attempts>=2).sort((a,b)=>(getStats(a.id).correct/getStats(a.id).attempts)-(getStats(b.id).correct/getStats(b.id).attempts)).slice(0,3);
   $('#teacherAdvice').innerHTML = weak.length ? `最近需要多陪伴的内容是：<b>${weak.map(i=>i.subject==='logic'?i.unit.title:`${i.word}（${i.meaning}）`).join('、')}</b>。系统已经把它们放入后续复习。建议家长只做生活中的指认和对话，不要求抄写，也不要在答错时立即给答案。` : '现在正处于建立学习记录的阶段。建议每天固定一个轻松的时间学习 10–15 分钟，结束后请孩子说一说今天认识的新朋友。完成三次学习后，这里会给出针对性的复习建议。';
 }
@@ -669,7 +805,7 @@ function handleGameChoice(button, index) {
   if (!gameSession || gameSession.answered) return; gameSession.answered = true;
   const correct = index === gameSession.question.correct; const buttons = $$('.game-choice-grid button'); buttons.forEach(choice => choice.disabled = true);
   buttons[gameSession.question.correct]?.classList.add('correct');
-  if (correct) { gameSession.correct += 1; button.classList.add('correct'); speak('答对啦，继续出发'); }
+  if (correct) { gameSession.correct += 1; button.classList.add('correct'); celebrate(button); speak('答对啦，继续出发'); }
   else { button.classList.add('wrong'); speak('没关系，看看亮起来的答案'); }
   $('#gameCorrectCount').textContent = gameSession.correct;
   $('#gameFeedback').innerHTML = `<div class="game-feedback ${correct ? 'success' : 'gentle'}"><b>${correct ? '太棒了！' : '找到方法了！'}</b><span>${correct ? '你又点亮了一颗小星星。' : '记住这个答案，下一轮继续加油。'}</span></div><button class="lesson-next" data-next-game-round>${gameSession.round === gameSession.items.length - 1 ? '看看成绩' : '下一轮'}</button>`;
@@ -684,6 +820,7 @@ function renderGameResult() {
   const passed = score >= 3; const hasNext = passed && gameSession.level < GAME_LEVELS[gameSession.subject].length - 1;
   const action = hasNext ? '<button class="lesson-next" data-next-game-level>下一关</button>' : `<button class="lesson-next" data-replay-game>${passed ? '再玩一次' : '再练一次'}</button>`;
   $('#gamePlayContent').innerHTML = `<div class="game-result"><span class="result-mascot">${GAME_THEME[gameSession.subject].icon}</span><h2>${score >= 4 ? '这一关完成得很棒！' : passed ? '达到解锁标准啦！' : '已经找到不少方法了！'}</h2><div class="result-stars">${[1,2,3].map(n=>`<i class="${n<=earned?'earned':''}">★</i>`).join('')}</div><p>答对 ${score} / 5 题，获得 ${earned} 颗闯关星。${passed ? '下一关已经解锁。' : '答对 3 题就能解锁下一关。'}</p><div><button class="soft-button" data-close-game>回到地图</button>${action}</div></div>`;
+  requestAnimationFrame(() => celebrate($('.result-mascot')));
   $('#starCount').textContent = state.stars;
 }
 
@@ -691,24 +828,28 @@ document.addEventListener('click', event => {
   const nav = event.target.closest('[data-nav]'); if (nav) { navigate(nav.dataset.nav); return; }
   const card = event.target.closest('[data-subject-card]'); if (card) { state.activeSubject=card.dataset.subjectCard;saveState();navigate(SUBJECT_WORLDS[state.activeSubject] || 'curriculum');return; }
   const world = event.target.closest('[data-open-world]'); if (world) { state.activeSubject=world.dataset.openWorld;saveState();navigate(SUBJECT_WORLDS[state.activeSubject] || 'curriculum');return; }
-  const stageEntry = event.target.closest('[data-entry-stage]'); if (stageEntry) { const [subject,index] = stageEntry.dataset.entryStage.split(':'); state.entryStages[subject] = Number(index); state.activeSubject = subject; saveState(); navigate(SUBJECT_WORLDS[subject]); requestAnimationFrame(() => document.querySelector(`[data-stage-anchor="${subject}:${index}"]`)?.scrollIntoView({ behavior:'smooth', block:'start' })); return; }
+  const stageView = event.target.closest('[data-view-stage]'); if (stageView) { const [subject,index] = stageView.dataset.viewStage.split(':'); state.viewStages[subject] = Number(index); state.activeSubject = subject; saveState(); navigate(SUBJECT_WORLDS[subject]); requestAnimationFrame(() => document.querySelector(`[data-stage-anchor="${subject}:${index}"]`)?.scrollIntoView({ behavior:'smooth', block:'start' })); return; }
+  const stageEntry = event.target.closest('[data-set-entry-stage]'); if (stageEntry) { const [subject,index] = stageEntry.dataset.setEntryStage.split(':'); state.entryStages[subject] = Number(index); state.viewStages[subject] = Number(index); state.activeSubject = subject; saveState(); navigate(SUBJECT_WORLDS[subject]); showToast('学习起点已更新'); return; }
   const unit = event.target.closest('[data-start-unit]'); if (unit) { const [subject,index]=unit.dataset.startUnit.split(':');startUnitLesson(subject,Number(index));return; }
   const gameSubject = event.target.closest('[data-game-subject]'); if (gameSubject) { activeGameSubject = gameSubject.dataset.gameSubject; renderGameHub(); return; }
   const gameStart = event.target.closest('[data-start-game]'); if (gameStart) { const [subject,index] = gameStart.dataset.startGame.split(':'); startProgressiveGame(subject,Number(index)); return; }
   const speakButton = event.target.closest('[data-speak-now]'); if (speakButton) { speak(speakButton.dataset.speakNow,speakButton.dataset.lang);return; }
-  const reveal = event.target.closest('[data-reveal-character]'); if (reveal) { const character = reveal.dataset.revealCharacter; reveal.disabled = true; reveal.style.display = 'none'; $('#characterReveal').innerHTML = `<div class="character-reveal"><span>${character}</span><p>原来是“${character}”！图画慢慢变成了汉字。</p><button class="lesson-next" data-next-task>去认识它</button></div>`; speak(character, 'zh-CN'); return; }
+  const reveal = event.target.closest('[data-reveal-character]'); if (reveal) { const character = reveal.dataset.revealCharacter; const meaning = reveal.dataset.revealMeaning || `${character}字`; celebrate(reveal,['✨','⭐','✨','🌟']); reveal.disabled = true; reveal.style.display = 'none'; $('#characterReveal').innerHTML = `<div class="character-reveal"><span>${character}</span><p>${reveal.dataset.revealVisual || ''} 原来是“${character}”！这幅图表示“${escapeHTML(meaning)}”。</p><button class="lesson-next" data-next-task>去认识它</button></div>`; speak(`${character}，${meaning}`, 'zh-CN'); return; }
   if (event.target.closest('[data-clear-trace]')) { $('#traceCanvas')?._clearTrace?.(); return; }
-  const speaking = event.target.closest('[data-start-speaking]'); if (speaking) { startSpeakingCheck(speaking.dataset.startSpeaking); return; }
+  const speaking = event.target.closest('[data-start-speaking]'); if (speaking) { startSpeakingCheck(speaking.dataset.startSpeaking,speaking.dataset.speakingLang || 'en-US'); return; }
+  if (event.target.closest('[data-stop-recording]')) { finishVoiceRecording(); return; }
+  if (event.target.closest('[data-play-recording]')) { const audio = $('#recordedVoice'); if (audio) { audio.currentTime = 0; audio.play(); } return; }
+  if (event.target.closest('[data-record-again]')) { if (voiceRecording?.target) startSpeakingCheck(voiceRecording.target,voiceRecording.lang); return; }
   if (event.target.closest('[data-finish-speaking]')) { nextTask(); return; }
   const manip = event.target.closest('[data-manip-index]'); if (manip) {
     const task = lesson.tasks[lesson.index]; const index = Number(manip.dataset.manipIndex); const mat = $('#thinkingMat');
     if (index === task.question.correct) {
-      $$('.manipulative-tray button').forEach(button => button.disabled = true); manip.classList.add('correct'); mat.classList.add('filled'); mat.innerHTML = `<strong>${task.question.options[index].visual}</strong><small>放对啦！</small>`; $('#manipFeedback').innerHTML = '<button class="lesson-next" data-next-task>我会摆了</button>'; speak('放对啦，你是怎么想的？');
+      $$('.manipulative-tray button').forEach(button => button.disabled = true); manip.classList.add('correct'); celebrate(mat); mat.classList.add('filled'); mat.innerHTML = `<strong>${task.question.options[index].visual}</strong><small>放对啦！</small>`; $('#manipFeedback').innerHTML = '<button class="lesson-next" data-next-task>我会摆了</button>'; speak('放对啦，你是怎么想的？');
     } else { manip.classList.add('try-again'); setTimeout(() => manip.classList.remove('try-again'), 450); speak('再比一比，换一个试试'); }
     return;
   }
   const reason = event.target.closest('[data-reason-index]'); if (reason) {
-    if (reason.dataset.reasonCorrect === 'true') { $$('.reason-options button').forEach(button => button.disabled = true); reason.classList.add('correct'); $('#reasonFeedback').innerHTML = `<div class="reason-spoken">🔊 ${reason.textContent}</div><button class="lesson-next" data-next-task>去闯一关</button>`; speak(reason.textContent); }
+    if (reason.dataset.reasonCorrect === 'true') { $$('.reason-options button').forEach(button => button.disabled = true); reason.classList.add('correct'); celebrate(reason); $('#reasonFeedback').innerHTML = `<div class="reason-spoken">🔊 ${reason.textContent}</div><button class="lesson-next" data-next-task>去闯一关</button>`; speak(reason.textContent); }
     else { reason.classList.add('try-again'); setTimeout(() => reason.classList.remove('try-again'), 450); speak('再想想，这句话讲清楚方法了吗？'); }
     return;
   }
