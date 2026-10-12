@@ -341,3 +341,50 @@ body{background:#eeecda}
 .english-cartoon-scene.compact .english-mascot{scale:.55;transform:none}.english-cartoon-scene.compact .english-tree{scale:.48;transform:none}.english-cartoon-scene.compact .english-sun{scale:.65;transform:none}.english-cartoon-scene.compact .english-cloud{scale:.45;transform:none}
 .english-game-visual{position:relative;min-height:520px;padding:45px 18px 12px}.english-game-visual .game-round-dots{position:absolute;left:50%;top:10px;transform:translateX(-50%)}.english-game-listen{position:absolute;z-index:12;left:14px;top:12px}.english-game-display{max-width:740px;height:190px;margin:0 auto 12px;display:grid;place-items:center;overflow:hidden;border-radius:20px;background:#eff7f2;color:#304b43;font:900 30px/1.25 "Trebuchet MS",sans-serif}.english-game-display>.english-cartoon-scene{height:100%;min-height:0}.english-game-choices{max-width:860px;margin:0 auto;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.english-game-choices>button{height:190px;min-width:0;padding:5px;border:4px solid transparent;border-radius:20px;background:#fff}.english-game-choices>button.correct{border-color:#4fc77f}.english-game-choices>button.wrong{border-color:#ee746d}.english-game-choices>button>span{width:100%;height:100%;display:grid;place-items:center;color:#304b43;font:900 27px/1.2 "Trebuchet MS",sans-serif}.english-game-choices .english-cartoon-scene{height:100%;min-height:0}.english-game-visual #gameFeedback{position:absolute;right:15px;bottom:15px}.english-game-result>div:last-child{display:flex;justify-content:center;gap:16px}.english-game-result .english-action-button{display:inline-grid}
 @media(orientation:landscape){.english-lesson-active .english-mascot{scale:.78}.english-lesson-active .english-cartoon-scene.compact .english-mascot{scale:.48}}
+
+/* iOS Safari cannot lock orientation, so portrait lesson viewports become a rotated landscape canvas. */
+@media(max-width:1100px) and (orientation:portrait){
+  body.english-lesson-active,body.chinese-lesson-active,body.logic-lesson-active{position:fixed;inset:0;width:100vw;height:100vh;overflow:hidden;background:#eef7f2}
+  body.english-lesson-active .topbar,body.chinese-lesson-active .topbar,body.logic-lesson-active .topbar,body.english-lesson-active .bottom-nav,body.chinese-lesson-active .bottom-nav,body.logic-lesson-active .bottom-nav{display:none!important}
+  .english-lesson-active .lesson-view,.chinese-lesson-active .lesson-view,.logic-lesson-active .lesson-view{position:fixed;z-index:1000;left:50%;top:50%;width:100vh;width:100dvh;height:100vw;height:100dvw;min-height:0;padding:0 0 6px;overflow:hidden;box-sizing:border-box;transform:translate(-50%,-50%) rotate(90deg);transform-origin:center;background:#eef7f2}
+  .chinese-lesson-active .lesson-view,.logic-lesson-active .lesson-view{background:#f1f2e8}
+  .english-lesson-active .lesson-header,.chinese-lesson-active .lesson-header,.logic-lesson-active .lesson-header{width:calc(100% - 18px);height:52px;margin:0 auto;padding:5px 0;grid-template-columns:40px minmax(0,1fr) auto;gap:9px;box-sizing:border-box}
+  .english-lesson-active .landscape-button,.chinese-lesson-active .landscape-button,.logic-lesson-active .landscape-button,.english-lesson-active .lesson-stars,.chinese-lesson-active .lesson-stars,.logic-lesson-active .lesson-stars{display:none!important}
+  .english-lesson-active .lesson-content,.chinese-lesson-active .lesson-content,.logic-lesson-active .lesson-content{width:calc(100% - 18px);height:calc(100vw - 60px);height:calc(100dvw - 60px);min-height:0;margin:0 auto;padding:7px 12px;overflow-y:auto;border-radius:18px;box-sizing:border-box}
+  .english-lesson-active .english-rotate-hint,.chinese-lesson-active .chinese-rotate-hint,.logic-lesson-active .logic-rotate-hint{display:none!important}
+  .english-lesson-active .english-stage-nav{height:26px;margin-bottom:5px}
+  .english-lesson-active .english-stage-nav span{width:24px;height:24px;font-size:10px}
+  .english-lesson-active .english-stage-nav>i{width:12px}
+  .english-lesson-active .english-scene-shell,.english-lesson-active .english-word-stage,.english-lesson-active .english-speaking-stage,.english-lesson-active .english-reader-stage{height:calc(100% - 31px);min-height:0}
+  .english-lesson-active .english-cartoon-scene{min-height:0;border-radius:18px}
+  .english-lesson-active .english-mascot{scale:.78;bottom:15%}
+  .english-lesson-active .english-cartoon-scene.compact .english-mascot{scale:.48}
+  .english-lesson-active .english-scene-prop{width:118px;height:118px;font-size:88px}
+  .english-lesson-active .english-scene-caption{bottom:8px;font-size:21px}
+  .english-lesson-active .english-action-button{width:48px;height:48px;border-width:3px;font-size:20px}
+  .english-lesson-active .lesson-content>.english-action-button.next{right:18px;bottom:16px}
+  .english-lesson-active .english-listen-question{height:calc(100% - 31px);min-height:0}
+  .english-lesson-active .english-scene-choices .answer-button{min-height:0}
+  .english-lesson-active .english-speaking-stage #speakingFeedback{bottom:65px}
+  .english-lesson-active .english-word-controls,.english-lesson-active .english-speech-controls{bottom:12px}
+  .chinese-lesson-active .chinese-stage-nav{height:31px;margin-bottom:6px;gap:6px}
+  .chinese-lesson-active .chinese-stage-nav span{width:29px;height:29px;font-size:11px}
+  .chinese-lesson-active .character-story-scene{height:min(46vw,230px);height:min(46dvw,230px);margin:7px auto}
+  .chinese-lesson-active .story-visual{font-size:min(18vw,105px);font-size:min(18dvw,105px)}
+  .chinese-lesson-active .teach-emoji{margin:5px auto 2px;font-size:min(20vw,96px);font-size:min(20dvw,96px)}
+  .chinese-lesson-active .teach-word{font-size:40px}
+  .chinese-lesson-active .teach-note{margin:7px auto;padding:9px}
+  .chinese-lesson-active .trace-canvas{width:min(270px,42vw);width:min(270px,42dvw);margin:6px auto}
+  .chinese-lesson-active .speak-character{margin:6px auto}
+  .chinese-lesson-active .speak-character>span{width:82px;height:82px;font-size:57px}
+  .chinese-lesson-active .phrase-bubbles{margin:9px auto}
+  .chinese-lesson-active .lesson-next{min-height:42px;margin-top:8px}
+  .logic-lesson-active .logic-stage-nav{margin-bottom:7px}
+  .logic-lesson-active .logic-stage-nav span{width:29px;height:29px;font-size:11px}
+  .logic-lesson-active .task-label{padding:4px 9px;font-size:10px}
+  .logic-lesson-active .question-title{margin:7px 0 3px;font-size:20px}
+  .logic-lesson-active .question-hint{margin-bottom:7px;font-size:12px}
+  .logic-lesson-active .logic-demo-board{min-height:270px;margin-top:7px}
+  .logic-lesson-active .logic-demo-scene{min-height:265px}
+  .logic-lesson-active .answer-button{min-height:92px}
+}

@@ -1,6 +1,6 @@
 const STORAGE_KEY = 'sprout-learning-v2';
 const CONTENT_SCHEMA_VERSION = 3;
-const APP_VERSION = '2026.10.12.4';
+const APP_VERSION = '2026.10.12.5';
 if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
 document.documentElement.dataset.appVersion = APP_VERSION;
 const todayKey = () => new Date().toISOString().slice(0, 10);
@@ -1008,7 +1008,7 @@ async function requestLessonLandscape() {
     try { await screen.orientation?.lock?.('landscape'); } catch (_) {}
   }
   const english = document.body.classList.contains('english-lesson-active');
-  showToast(matchMedia('(orientation: landscape)').matches ? (english ? 'Landscape lesson ready' : '横屏课堂已打开') : (english ? 'Turn your phone sideways' : '请把手机横过来学习'));
+  showToast(english ? 'Landscape lesson ready' : '横屏课堂已打开');
 }
 
 function renderLessonSummary() {
