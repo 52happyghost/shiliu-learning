@@ -1,5 +1,8 @@
 const STORAGE_KEY = 'sprout-learning-v2';
 const CONTENT_SCHEMA_VERSION = 3;
+const APP_VERSION = '2026.10.12.4';
+if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+document.documentElement.dataset.appVersion = APP_VERSION;
 const todayKey = () => new Date().toISOString().slice(0, 10);
 const defaultState = { schemaVersion: CONTENT_SCHEMA_VERSION, stars: 0, sound: true, streak: 0, lastStudy: '', studyDates: [], totalMinutes: 0, sessions: 0, mastery: {}, gameProgress: {}, patternThemeCursor: 0, logicSceneCursor: 0, entryStages: { english: 0, chinese: 0, logic: 0 }, viewStages: { english: 0, chinese: 0, logic: 0 }, activeSubject: 'english' };
 let saved = {};
@@ -71,8 +74,8 @@ function speak(text, lang = 'zh-CN') {
 refreshSpeechVoices();
 if ('speechSynthesis' in window) speechSynthesis.addEventListener?.('voiceschanged', refreshSpeechVoices);
 
-function leaveLogicLandscape() {
-  document.body.classList.remove('logic-lesson-active','english-lesson-active');
+function leaveLessonLandscape() {
+  document.body.classList.remove('logic-lesson-active','english-lesson-active','chinese-lesson-active');
   try { screen.orientation?.unlock?.(); } catch (_) {}
   if (document.fullscreenElement === document.documentElement) { const exiting = document.exitFullscreen?.(); exiting?.catch?.(() => {}); }
 }
@@ -80,7 +83,7 @@ function leaveLogicLandscape() {
 function navigate(view) {
   stopSpeech();
   cancelVoiceRecording();
-  if (view !== 'lesson') leaveLogicLandscape();
+  if (view !== 'lesson') leaveLessonLandscape();
   $$('.view').forEach(node => node.classList.toggle('active', node.dataset.view === view));
   $$('.bottom-nav [data-nav]').forEach(button => button.classList.toggle('active', button.dataset.nav === view || (['chinese-world','english-world','logic-world'].includes(view) && button.dataset.nav === 'curriculum')));
   $('.bottom-nav').style.display = view === 'lesson' ? 'none' : 'grid';
@@ -91,7 +94,7 @@ function navigate(view) {
   if (view === 'report') renderReport();
   if (view === 'games') renderGameHub();
   if (view === 'home') renderHome();
-  window.scrollTo({ top: 0, behavior: 'smooth' });
+  window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
 }
 
 const STAGE_STARTS = { english: [0,10,20,30], chinese: [0,10,20,30,40], logic: [0,12,24] };
@@ -310,20 +313,23 @@ function startDailyLesson() {
   const entries = buildDailyEntries();
   if (!entries.length) return;
   createLesson(entries, '今日自适应学习', true);
+  if (matchMedia('(max-width: 1100px)').matches) requestLessonLandscape();
 }
 
 function startUnitLesson(subject, unitIndex) {
   const items = allSubjectItems(subject).filter(item => item.unitIndex === unitIndex);
   if (subject === 'logic') {
     const entries = [...items].sort((a,b) => getStats(a.id).score - getStats(b.id).score || getStats(a.id).attempts - getStats(b.id).attempts).slice(0,2).map(item => ({ ...item, isNew:getStats(item.id).score === 0 }));
-    createLesson(entries, `${CURRICULUM[subject].name} · ${CURRICULUM[subject].units[unitIndex].title}`); return;
+    createLesson(entries, `${CURRICULUM[subject].name} · ${CURRICULUM[subject].units[unitIndex].title}`);
+    if (matchMedia('(max-width: 1100px)').matches) requestLessonLandscape();
+    return;
   }
   const review = items.filter(item => getStats(item.id).score > 0 && getStats(item.id).score < 4).slice(0, 2);
   const fresh = items.filter(item => getStats(item.id).score === 0).slice(0, 2);
   let entries = [...review, ...fresh].map(item => ({ ...item, isNew: getStats(item.id).score === 0 }));
   if (!entries.length) entries = shuffle(items).slice(0, 3).map(item => ({ ...item, isNew: false }));
   createLesson(entries, `${CURRICULUM[subject].name} · ${CURRICULUM[subject].units[unitIndex].title}`);
-  if ((subject === 'english' || subject === 'logic') && matchMedia('(max-width: 1000px)').matches) requestLessonLandscape();
+  if (matchMedia('(max-width: 1100px)').matches) requestLessonLandscape();
 }
 
 function renderLesson() {
@@ -332,13 +338,13 @@ function renderLesson() {
   const total = lesson.tasks.length; const position = Math.min(lesson.index + 1, total);
   $('#lessonCounter').textContent = `${position} / ${total}`;
   $('#lessonProgress').style.width = `${lesson.index / Math.max(total, 1) * 100}%`;
-  if (lesson.index >= total) { leaveLogicLandscape(); $('#landscapeMode').hidden = true; renderLessonSummary(); return; }
+  if (lesson.index >= total) { leaveLessonLandscape(); $('#landscapeMode').hidden = true; renderLessonSummary(); return; }
   const task = lesson.tasks[lesson.index];
-  const isLogic = task.item?.subject === 'logic'; const isEnglish = task.item?.subject === 'english';
+  const isLogic = task.item?.subject === 'logic'; const isEnglish = task.item?.subject === 'english'; const isChinese = task.item?.subject === 'chinese';
   document.body.classList.toggle('logic-lesson-active',isLogic);
   document.body.classList.toggle('english-lesson-active',isEnglish);
-  if (!isLogic && !isEnglish) leaveLogicLandscape();
-  $('#landscapeMode').hidden = !isLogic && !isEnglish;
+  document.body.classList.toggle('chinese-lesson-active',isChinese);
+  $('#landscapeMode').hidden = !isLogic && !isEnglish && !isChinese;
   $('#landscapeMode').setAttribute('aria-label',isEnglish ? 'Open landscape English lesson' : '进入横屏学习');
   $('#lessonSubject').textContent = isEnglish ? 'English Adventure' : lesson.title;
   if (task.kind === 'english-story') renderEnglishStory(task.item);
@@ -556,7 +562,7 @@ async function startSpeakingCheck(target, lang = 'en-US') {
 }
 
 function chineseStageNav(active) {
-  return `<div class="chinese-stage-nav">${['玩','认','练','写','说'].map(name => `<span class="${name === active ? 'active' : ''}">${name}</span>`).join('<i>·</i>')}</div>`;
+  return `<div class="chinese-rotate-hint" aria-hidden="true"><span>↻</span><i></i></div><div class="chinese-stage-nav">${['玩','认','练','写','说'].map(name => `<span class="${name === active ? 'active' : ''}">${name}</span>`).join('<i>·</i>')}</div>`;
 }
 
 function logicStageNav(active) {
@@ -998,7 +1004,9 @@ function nextTask() { cancelVoiceRecording(); lesson.index += 1; renderLesson();
 
 async function requestLessonLandscape() {
   try { if (!document.fullscreenElement) await document.documentElement.requestFullscreen?.(); } catch (_) {}
-  try { await screen.orientation?.lock?.('landscape'); } catch (_) {}
+  try { await screen.orientation?.lock?.('landscape-primary'); } catch (_) {
+    try { await screen.orientation?.lock?.('landscape'); } catch (_) {}
+  }
   const english = document.body.classList.contains('english-lesson-active');
   showToast(matchMedia('(orientation: landscape)').matches ? (english ? 'Landscape lesson ready' : '横屏课堂已打开') : (english ? 'Turn your phone sideways' : '请把手机横过来学习'));
 }
@@ -1234,5 +1242,5 @@ $('#landscapeMode').addEventListener('click',requestLessonLandscape);
 $('#keepLearning').addEventListener('click',()=>$('#confirmModal').classList.remove('show'));
 $('#confirmExit').addEventListener('click',()=>{$('#confirmModal').classList.remove('show');lesson=null;navigate('home')});
 $('#resetProgress').addEventListener('click',()=>{if(confirm('确定清除全部学习记录吗？此操作无法撤销。')){localStorage.removeItem(STORAGE_KEY);location.reload()}});
-$('#soundToggle').textContent=state.sound?'🔊':'🔇';renderHome();
+$('#soundToggle').textContent=state.sound?'🔊':'🔇';renderHome();window.scrollTo(0,0);
 const initialView=location.hash.slice(1);if(initialView==='lesson')startDailyLesson();else if(initialView==='chinese-lesson')startUnitLesson('chinese',0);else if(initialView==='english-lesson')startUnitLesson('english',0);else if(initialView==='logic-lesson')startUnitLesson('logic',0);else if(['home','curriculum','english-world','chinese-world','logic-world','games','report'].includes(initialView))navigate(initialView);

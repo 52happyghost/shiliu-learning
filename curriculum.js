@@ -45,7 +45,7 @@ const ENGLISH_UNITS = [
 ];
 function chineseUnit(title, goal, icon, chars, examples, readings = '', visuals = '') {
   const words = [...chars]; const phrases = examples.split(' '); const pinyin = readings ? readings.split(' ') : []; const pictures = visuals ? visuals.split(' ') : [];
-  return [title, goal, words.map((word, index) => [word, pinyin[index] || '', phrases[index] || `${word}字`, pictures[index] || icon])];
+  return [title, goal, words.map((word, index) => [word, pinyin[index] || '', phrases[index] || `${word}字`, pictures[index] || icon]), { icon }];
 }
 const CHINESE_UNITS = [
   chineseUnit('自然象形字','从自然图景理解最早的一批汉字','☀️','日月山水火木花草石土','太阳 月亮 高山 河水 火苗 木头 花朵 小草 石头 土地','rì yuè shān shuǐ huǒ mù huā cǎo shí tǔ','☀️ 🌙 ⛰️ 💧 🔥 🌳 🌸 🌿 🪨 🌱'),

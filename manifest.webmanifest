@@ -1,0 +1,11 @@
+{
+  "name": "石榴的学习乐园",
+  "short_name": "石榴乐园",
+  "lang": "zh-CN",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#f7f5e8",
+  "theme_color": "#ff6b6b"
+}
