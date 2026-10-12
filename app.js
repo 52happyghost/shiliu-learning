@@ -1,6 +1,6 @@
 const STORAGE_KEY = 'sprout-learning-v2';
 const CONTENT_SCHEMA_VERSION = 3;
-const APP_VERSION = '2026.10.12.5';
+const APP_VERSION = '2026.10.12.6';
 if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
 document.documentElement.dataset.appVersion = APP_VERSION;
 const todayKey = () => new Date().toISOString().slice(0, 10);
@@ -440,7 +440,8 @@ function englishDrawnProp(item) {
   const count = countWords[item.word.toLowerCase()] || 0;
   const dots = count ? Array.from({length:count},(_,index)=>`<u style="--dot:${index}"></u>`).join('') : '';
   const letter = escapeHTML(item.word.charAt(0).toUpperCase());
-  return `<span class="english-drawn-prop kind-${kind} art-${wordClass}" style="--art-hue:${seed % 360}" aria-hidden="true"><i></i><b></b><em></em>${dots}<strong>${kind === 'phonics' ? letter : kind === 'question' ? '?' : ''}</strong></span>`;
+  const exactPicture = escapeHTML(item.emoji || '🔎');
+  return `<span class="english-drawn-prop has-exact-picture kind-${kind} art-${wordClass}" style="--art-hue:${seed % 360}" data-picture-word="${escapeHTML(item.word)}" aria-hidden="true"><i></i><b></b><em></em>${dots}<span class="prop-picture">${exactPicture}</span><strong>${kind === 'phonics' ? letter : ''}</strong></span>`;
 }
 
 function englishCartoonScene(item,{caption='',variant=0,compact=false}={}) {

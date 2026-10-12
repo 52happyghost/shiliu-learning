@@ -388,3 +388,20 @@ body{background:#eeecda}
   .logic-lesson-active .logic-demo-scene{min-height:265px}
   .logic-lesson-active .answer-button{min-height:92px}
 }
+
+/* Exact vocabulary pictures: every word, sentence and answer reuses its own curriculum image. */
+.english-drawn-prop.has-exact-picture>i,.english-drawn-prop.has-exact-picture>b,.english-drawn-prop.has-exact-picture>em,.english-drawn-prop.has-exact-picture>u{display:none}
+.english-drawn-prop .prop-picture{position:absolute;z-index:3;inset:8%;display:grid;place-items:center;border:6px solid #fff;border-radius:32%;background:rgba(255,255,255,.72);box-shadow:inset 8px 7px rgba(255,255,255,.44),0 8px 0 rgba(46,72,62,.14);font-size:88px;line-height:1;filter:drop-shadow(0 5px 2px rgba(45,65,54,.18))}
+.english-drawn-prop.has-exact-picture strong{display:none}
+.english-drawn-prop.has-exact-picture.kind-phonics strong{inset:auto 2px 2px auto;width:35px;height:35px;display:grid;border:3px solid #fff;border-radius:50%;background:#e85f62;font-size:19px;text-shadow:none}
+.english-cartoon-scene.compact .english-drawn-prop .prop-picture{border-width:4px;border-radius:27%;font-size:61px;box-shadow:inset 5px 4px rgba(255,255,255,.42),0 5px 0 rgba(46,72,62,.14)}
+.book-cover .english-drawn-prop .prop-picture{inset:4%;border-width:2px;border-radius:20%;font-size:34px;box-shadow:0 2px 0 rgba(46,72,62,.12)}
+.english-preview .english-drawn-prop .prop-picture{inset:1%;border-width:1px;border-radius:20%;font-size:20px;box-shadow:none;filter:none}
+.english-preview .english-drawn-prop.has-exact-picture.kind-phonics strong,.book-cover .english-drawn-prop.has-exact-picture.kind-phonics strong{display:none}
+
+/* The exit confirmation must remain above and aligned with the forced landscape classroom. */
+.confirm-modal{z-index:5000}
+@media(max-width:1100px) and (orientation:portrait){
+  body.english-lesson-active .confirm-modal,body.chinese-lesson-active .confirm-modal,body.logic-lesson-active .confirm-modal{left:50%;right:auto;top:50%;bottom:auto;width:100vh;width:100dvh;height:100vw;height:100dvw;transform:translate(-50%,-50%) rotate(90deg);transform-origin:center}
+  body.english-lesson-active .confirm-modal>div,body.chinese-lesson-active .confirm-modal>div,body.logic-lesson-active .confirm-modal>div{width:min(350px,calc(100% - 36px));padding:22px}
+}
