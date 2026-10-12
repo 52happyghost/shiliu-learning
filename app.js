@@ -1,7 +1,7 @@
 const STORAGE_KEY = 'sprout-learning-v2';
 const CONTENT_SCHEMA_VERSION = 3;
 const todayKey = () => new Date().toISOString().slice(0, 10);
-const defaultState = { schemaVersion: CONTENT_SCHEMA_VERSION, stars: 0, sound: true, streak: 0, lastStudy: '', studyDates: [], totalMinutes: 0, sessions: 0, mastery: {}, gameProgress: {}, entryStages: { english: 0, chinese: 0, logic: 0 }, viewStages: { english: 0, chinese: 0, logic: 0 }, activeSubject: 'english' };
+const defaultState = { schemaVersion: CONTENT_SCHEMA_VERSION, stars: 0, sound: true, streak: 0, lastStudy: '', studyDates: [], totalMinutes: 0, sessions: 0, mastery: {}, gameProgress: {}, patternThemeCursor: 0, logicSceneCursor: 0, entryStages: { english: 0, chinese: 0, logic: 0 }, viewStages: { english: 0, chinese: 0, logic: 0 }, activeSubject: 'english' };
 let saved = {};
 try { saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); } catch (_) { saved = {}; }
 const needsContentMigration = (saved.schemaVersion || 0) < CONTENT_SCHEMA_VERSION;
@@ -71,9 +71,16 @@ function speak(text, lang = 'zh-CN') {
 refreshSpeechVoices();
 if ('speechSynthesis' in window) speechSynthesis.addEventListener?.('voiceschanged', refreshSpeechVoices);
 
+function leaveLogicLandscape() {
+  document.body.classList.remove('logic-lesson-active','english-lesson-active');
+  try { screen.orientation?.unlock?.(); } catch (_) {}
+  if (document.fullscreenElement === document.documentElement) { const exiting = document.exitFullscreen?.(); exiting?.catch?.(() => {}); }
+}
+
 function navigate(view) {
   stopSpeech();
   cancelVoiceRecording();
+  if (view !== 'lesson') leaveLogicLandscape();
   $$('.view').forEach(node => node.classList.toggle('active', node.dataset.view === view));
   $$('.bottom-nav [data-nav]').forEach(button => button.classList.toggle('active', button.dataset.nav === view || (['chinese-world','english-world','logic-world'].includes(view) && button.dataset.nav === 'curriculum')));
   $('.bottom-nav').style.display = view === 'lesson' ? 'none' : 'grid';
@@ -232,11 +239,11 @@ function renderEnglishWorld() {
   $('#englishBookMap').innerHTML = subject.units.map((unit, index) => ({ unit,index })).filter(({index}) => index >= selectedStage && index < selectedStage + 10).map(({unit,index}) => {
     const progress = unitProgress('english', index); const unlocked = unitUnlocked('english', index);
     const stateClass = !unlocked ? 'locked' : progress >= 80 ? 'mastered' : index === currentUnitIndex('english') ? 'current' : '';
-    const coverIcons = unit.items.slice(0, 3).map(item => item.emoji).join('');
+    const coverIcons = unit.items.slice(0, 3).map(item => `<i>${englishDrawnProp({...item,unit,unitIndex:index})}</i>`).join('');
     const stage = stages[index];
     const banner = stage ? `<div class="english-stage-banner" data-stage-anchor="english:${index}"><span>${stage[1]}</span><div><small>${stage[0]}</small><h2>${stage[2]}</h2><button class="stage-entry-action" data-set-entry-stage="english:${index}" ${state.entryStages.english === index ? 'disabled' : ''}>${state.entryStages.english === index ? '当前学习起点' : '从本阶段开始'}</button></div></div>` : '';
-    const preview = unlocked ? `<div class="unit-sound-preview english-preview">${unit.items.slice(0,3).map(item => `<button data-speak-now="${item.word}" data-lang="en-US" title="听 ${item.word}"><span>${item.emoji}</span><b>${item.word}</b></button>`).join('')}</div>` : '';
-    return `${banner}<article class="english-book ${stateClass}"><div class="book-cover"><span>${unlocked ? coverIcons : '🔒'}</span><small>LEVEL ${index + 1}</small></div><div class="book-info"><small>${index < 10 ? '听说启蒙' : index < 20 ? '情境短句' : index < 30 ? '故事表达' : '拼读阅读'}</small><h2>${unit.title}</h2><p>${unit.goal}</p><em>${unit.focus}</em>${preview}<div class="book-progress"><i style="width:${progress}%"></i></div><span>${progress}% · ${masteryLabel(Math.round(progress / 25))}</span></div><button data-start-unit="english:${index}" ${!unlocked ? 'disabled' : ''}>${progress ? '继续学习' : index >= 30 ? '开始拼读' : '开始故事'}</button></article>`;
+    const preview = unlocked ? `<div class="unit-sound-preview english-preview">${unit.items.slice(0,3).map(item => `<button data-speak-now="${item.word}" data-lang="en-US" title="听 ${item.word}"><span class="english-mini-art">${englishDrawnProp({...item,unit,unitIndex:index})}</span><b>${item.word}</b></button>`).join('')}</div>` : '';
+    return `${banner}<article class="english-book ${stateClass}"><div class="book-cover"><span class="${unlocked ? 'book-cover-art' : ''}">${unlocked ? coverIcons : '🔒'}</span><small>LEVEL ${index + 1}</small></div><div class="book-info"><small>${index < 10 ? '听说启蒙' : index < 20 ? '情境短句' : index < 30 ? '故事表达' : '拼读阅读'}</small><h2>${unit.title}</h2><p>${unit.goal}</p><em>${unit.focus}</em>${preview}<div class="book-progress"><i style="width:${progress}%"></i></div><span>${progress}% · ${masteryLabel(Math.round(progress / 25))}</span></div><button data-start-unit="english:${index}" ${!unlocked ? 'disabled' : ''}>${progress ? '继续学习' : index >= 30 ? '开始拼读' : '开始故事'}</button></article>`;
   }).join('');
 }
 
@@ -262,24 +269,40 @@ function renderLogicWorld() {
 function createLesson(entries, title, isDaily = false) {
   if (!entries.length) { showToast('这个单元已经掌握，去看看下一单元吧'); return; }
   const tasks = []; const embeddedPractice = new Set();
+  const logicEntries = entries.filter(entry => entry.subject === 'logic');
+  if (logicEntries.length) {
+    const concept = logicEntries[0]; const challenge = logicEntries[1] || concept;
+    tasks.push(
+      { kind:'logic-story', item:concept },
+      { kind:'logic-demo', item:concept, demoStep:0 },
+      { kind:'logic-manipulate', item:concept },
+      { kind:'practice', item:concept, retry:0, stage:'想' },
+      { kind:'logic-explain', item:concept },
+      { kind:'practice', item:challenge, retry:0, stage:'闯' }
+    );
+    logicEntries.forEach(entry => embeddedPractice.add(entry.id));
+  }
   entries.forEach(entry => {
+    if (entry.subject === 'logic') return;
     if (entry.isNew || getStats(entry.id).score === 0) {
       if (entry.subject === 'english') {
-        tasks.push({ kind: 'english-story', item: entry }, { kind: 'teach', item: entry }, { kind: 'english-speak', item: entry }, { kind: 'practice', item: entry, retry: 0 }, { kind: 'english-read', item: entry });
+        tasks.push(
+          { kind: 'english-story', item: entry },
+          { kind: 'teach', item: entry },
+          { kind: 'english-speak', item: entry },
+          { kind: 'practice', item: entry, retry: 0 },
+          ...englishReaderLines(entry).map((_,page) => ({ kind:'english-read', item:entry, page }))
+        );
         embeddedPractice.add(entry.id);
       }
       else if (entry.subject === 'chinese') {
         tasks.push({ kind: 'chinese-play', item: entry }, { kind: 'teach', item: entry }, { kind: 'practice', item: entry, retry: 0 }, { kind: 'chinese-trace', item: entry }, { kind: 'chinese-speak', item: entry });
         embeddedPractice.add(entry.id);
       }
-      else {
-        tasks.push({ kind: 'logic-story', item: entry }, { kind: 'logic-manipulate', item: entry }, { kind: 'practice', item: entry, retry: 0, stage: '想' }, { kind: 'logic-explain', item: entry }, { kind: 'practice', item: entry, retry: 0, stage: '闯' });
-        embeddedPractice.add(entry.id);
-      }
     }
   });
   shuffle(entries.filter(entry => !embeddedPractice.has(entry.id))).forEach(entry => tasks.push({ kind: 'practice', item: entry, retry: 0 }));
-  lesson = { title, tasks, index: 0, stars: 0, correct: 0, wrong: 0, learned: new Set(entries.filter(x => x.isNew).map(x => x.id)), isDaily, startedAt: Date.now() };
+  lesson = { title, tasks, index: 0, stars: 0, correct: 0, wrong: 0, learned: new Set(entries.filter(x => x.isNew).map(x => x.id)), logicQuestionHistory: new Set(), logicVariantCursor: {}, patternThemeHistory: new Set(), logicSceneHistory: new Set(), isDaily, startedAt: Date.now() };
   navigate('lesson'); renderLesson();
 }
 
@@ -291,11 +314,16 @@ function startDailyLesson() {
 
 function startUnitLesson(subject, unitIndex) {
   const items = allSubjectItems(subject).filter(item => item.unitIndex === unitIndex);
+  if (subject === 'logic') {
+    const entries = [...items].sort((a,b) => getStats(a.id).score - getStats(b.id).score || getStats(a.id).attempts - getStats(b.id).attempts).slice(0,2).map(item => ({ ...item, isNew:getStats(item.id).score === 0 }));
+    createLesson(entries, `${CURRICULUM[subject].name} · ${CURRICULUM[subject].units[unitIndex].title}`); return;
+  }
   const review = items.filter(item => getStats(item.id).score > 0 && getStats(item.id).score < 4).slice(0, 2);
   const fresh = items.filter(item => getStats(item.id).score === 0).slice(0, 2);
   let entries = [...review, ...fresh].map(item => ({ ...item, isNew: getStats(item.id).score === 0 }));
   if (!entries.length) entries = shuffle(items).slice(0, 3).map(item => ({ ...item, isNew: false }));
   createLesson(entries, `${CURRICULUM[subject].name} · ${CURRICULUM[subject].units[unitIndex].title}`);
+  if ((subject === 'english' || subject === 'logic') && matchMedia('(max-width: 1000px)').matches) requestLessonLandscape();
 }
 
 function renderLesson() {
@@ -304,15 +332,23 @@ function renderLesson() {
   const total = lesson.tasks.length; const position = Math.min(lesson.index + 1, total);
   $('#lessonCounter').textContent = `${position} / ${total}`;
   $('#lessonProgress').style.width = `${lesson.index / Math.max(total, 1) * 100}%`;
-  if (lesson.index >= total) { renderLessonSummary(); return; }
+  if (lesson.index >= total) { leaveLogicLandscape(); $('#landscapeMode').hidden = true; renderLessonSummary(); return; }
   const task = lesson.tasks[lesson.index];
+  const isLogic = task.item?.subject === 'logic'; const isEnglish = task.item?.subject === 'english';
+  document.body.classList.toggle('logic-lesson-active',isLogic);
+  document.body.classList.toggle('english-lesson-active',isEnglish);
+  if (!isLogic && !isEnglish) leaveLogicLandscape();
+  $('#landscapeMode').hidden = !isLogic && !isEnglish;
+  $('#landscapeMode').setAttribute('aria-label',isEnglish ? 'Open landscape English lesson' : '进入横屏学习');
+  $('#lessonSubject').textContent = isEnglish ? 'English Adventure' : lesson.title;
   if (task.kind === 'english-story') renderEnglishStory(task.item);
   else if (task.kind === 'english-speak') renderEnglishSpeak(task.item);
-  else if (task.kind === 'english-read') renderEnglishRead(task.item);
+  else if (task.kind === 'english-read') renderEnglishRead(task);
   else if (task.kind === 'chinese-play') renderChinesePlay(task.item);
   else if (task.kind === 'chinese-trace') renderChineseTrace(task.item);
   else if (task.kind === 'chinese-speak') renderChineseSpeak(task.item);
   else if (task.kind === 'logic-story') renderLogicStory(task.item);
+  else if (task.kind === 'logic-demo') renderLogicDemo(task);
   else if (task.kind === 'logic-manipulate') renderLogicManipulate(task);
   else if (task.kind === 'logic-explain') renderLogicExplain(task);
   else if (task.kind === 'teach') renderTeach(task.item);
@@ -320,16 +356,103 @@ function renderLesson() {
 }
 
 function englishStageNav(active) {
-  return `<div class="english-stage-nav">${['听','看','说','玩','读'].map(name => `<span class="${name === active ? 'active' : ''}">${name}</span>`).join('<i>·</i>')}</div>`;
+  const stages = [{id:'listen',icon:'♫'},{id:'look',icon:'◉'},{id:'speak',icon:'●'},{id:'play',icon:'★'},{id:'read',icon:'▤'}];
+  return `<div class="english-rotate-hint" aria-hidden="true"><span>↻</span><i>▰</i></div><div class="english-stage-nav">${stages.map(stage => `<span class="${stage.id === active ? 'active' : ''}" aria-label="${stage.id}">${stage.icon}</span>`).join('<i></i>')}</div>`;
 }
 
 function englishSentence(item) {
-  return (item.unit.pattern || 'I see {word}.').replaceAll('{word}', item.word);
+  const overrides = {
+    '玩具小屋': { ball:'I play with a ball.', doll:'I play with a doll.', kite:'I play with a kite.', robot:'I play with a robot.', puzzle:'I play with a puzzle.' },
+    '躲在哪里': { between:'It is between two boxes.' },
+    '一天与时间': { today:'Today is a new day.', tomorrow:'Tomorrow is another day.' },
+    '问题小侦探': { what:'I can ask, “What?”', where:'I can ask, “Where?”', who:'I can ask, “Who?”', how:'I can ask, “How?”', why:'I can ask, “Why?”', when:'I can ask, “When?”' },
+    '故事顺序词': { first:'First means the beginning.', next:'Next tells what follows.', then:'Then tells what follows.', after:'After means later.', last:'Last comes near the end.', end:'The end finishes the story.' }
+  };
+  return overrides[item.unit.title]?.[item.word] || (item.unit.pattern || 'I see {word}.').replaceAll('{word}', item.word);
 }
 
 function englishReaderLines(item) {
   const lines = item.unit.reader || ['Look at the picture.','I see {word}.','Can you say it?'];
-  return lines.map(line => line.replaceAll('{word}', item.word));
+  const defaultSentence = (item.unit.pattern || 'I see {word}.').replaceAll('{word}',item.word);
+  return lines.map(line => {
+    const rendered = line.replaceAll('{word}',item.word);
+    return rendered === defaultSentence ? englishSentence(item) : rendered;
+  });
+}
+
+function englishSceneTheme(item) {
+  const word = item.word.toLowerCase();
+  const groups = [
+    ['kitchen',/apple|banana|orange|bread|milk|water|juice|rice|egg|cake|cup|spoon|fork|plate|cook|breakfast|lunch|dinner/],
+    ['farm',/cow|pig|duck|horse|sheep|chicken|goat|seed|root|sprout|leaf|flower|fruit/],
+    ['town',/school|park|hospital|library|shop|zoo|doctor|teacher|police|firefighter|driver/],
+    ['ocean',/fish|whale|ship|swim|blue/],
+    ['night',/moon|star|night|sleep|bed|evening/],
+    ['playground',/ball|run|jump|dance|clap|play|kite|fast|slow/],
+    ['home',/mom|dad|brother|sister|baby|family|chair|table|door|window|fridge|clean|dirty|full|empty/],
+    ['garden',/lion|tiger|elephant|monkey|giraffe|bear|cat|dog|rabbit|bird|butterfly/]
+  ];
+  return groups.find(([,pattern]) => pattern.test(word))?.[0] || ['park','home','classroom','garden'][item.unitIndex % 4];
+}
+
+function englishWordClass(word) {
+  return String(word).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+}
+
+function englishVisualKind(item) {
+  const word = item.word.toLowerCase();
+  const groups = [
+    ['color',/^(red|blue|yellow|green|black|white)$/],
+    ['number',/^(one|two|three|four|five|six)$/],
+    ['shape',/^(circle|square|triangle|rectangle|heart|star)$/],
+    ['animal',/cat|dog|rabbit|bird|fish|panda|lion|tiger|elephant|monkey|giraffe|bear|cow|pig|duck|horse|sheep|chicken|goat|ox|hen|fox|frog|whale|octopus|zebra|ant|insect/],
+    ['food',/apple|banana|orange|grape|watermelon|strawberry|rice|egg|milk|bread|cake|noodles|jam|fruit|cup/],
+    ['body',/^(eye|ear|nose|mouth|hand|foot|leg)$/],
+    ['person',/mom|dad|grandma|grandpa|brother|sister|doctor|teacher|police officer|firefighter|cook|driver|baby/],
+    ['vehicle',/^(car|bus|train|bike|boat|plane|van|ship)$/],
+    ['place',/school|park|hospital|library|shop|zoo|bedroom|kitchen|bathroom/],
+    ['weather',/sunny|rainy|cloudy|windy|hot|cold|moon|sun|sky|night|morning|afternoon|evening|today|tomorrow/],
+    ['nature',/tree|flower|grass|river|seed|root|sprout|leaf/],
+    ['clothes',/hat|shirt|dress|shoes|socks|coat/],
+    ['action',/run|jump|walk|eat|drink|sleep|wake up|brush|wash|play|read|clap|stop|swim|sit|pull|push|dance/],
+    ['emotion',/happy|sad|angry|scared|tired|excited|clean|dirty|full|empty|young|old|big|small|tall|short|fast|slow/],
+    ['position',/^(in|on|under|behind|next to|between)$/],
+    ['question',/^(what|where|who|how|why|when)$/],
+    ['people',/^(i|you|we|he|she|they)$/],
+    ['sequence',/^(first|next|then|after|last|end)$/],
+    ['phonics',/starts with this sound|sound out/]
+  ];
+  if (item.phonics) return 'phonics';
+  if (item.unit.title === '颜色乐园') return 'color';
+  return groups.find(([,pattern]) => pattern.test(word))?.[0] || 'object';
+}
+
+function englishDrawnProp(item) {
+  const kind = englishVisualKind(item); const wordClass = englishWordClass(item.word);
+  const seed = [...item.word].reduce((sum,char) => sum + char.charCodeAt(0),0);
+  const countWords = { one:1,two:2,three:3,four:4,five:5,six:6 };
+  const count = countWords[item.word.toLowerCase()] || 0;
+  const dots = count ? Array.from({length:count},(_,index)=>`<u style="--dot:${index}"></u>`).join('') : '';
+  const letter = escapeHTML(item.word.charAt(0).toUpperCase());
+  return `<span class="english-drawn-prop kind-${kind} art-${wordClass}" style="--art-hue:${seed % 360}" aria-hidden="true"><i></i><b></b><em></em>${dots}<strong>${kind === 'phonics' ? letter : kind === 'question' ? '?' : ''}</strong></span>`;
+}
+
+function englishCartoonScene(item,{caption='',variant=0,compact=false}={}) {
+  const wordClass = englishWordClass(item.word); const relation = ['in','on','under','behind','next-to','between'].includes(wordClass);
+  const markedCaption = caption ? replaceEnglishWord(escapeHTML(caption),escapeHTML(item.word),`<strong>${escapeHTML(item.word)}</strong>`) : '';
+  return `<div class="english-cartoon-scene scene-${englishSceneTheme(item)} word-${wordClass} variant-${variant % 3} ${compact ? 'compact' : ''}" aria-label="${escapeHTML(item.word)}">
+    <span class="english-cloud cloud-one"></span><span class="english-cloud cloud-two"></span><span class="english-sun"></span>
+    <span class="english-tree tree-one"></span><span class="english-tree tree-two"></span>
+    <span class="english-scene-prop">${englishDrawnProp(item)}</span>${relation ? '<span class="english-relation-box"></span>' : ''}
+    <span class="english-mascot"><i class="mascot-eye eye-one"></i><i class="mascot-eye eye-two"></i><b></b><em></em></span>
+    <span class="english-ground-detail"></span>
+    ${markedCaption ? `<p class="english-scene-caption">${markedCaption}</p>` : ''}
+  </div>`;
+}
+
+function englishIconButton(kind, attributes, label) {
+  const icon = kind === 'listen' ? '🔊' : kind === 'record' ? '●' : '›';
+  return `<button class="english-action-button ${kind}" ${attributes} aria-label="${label}">${icon}</button>`;
 }
 
 function replaceEnglishWord(text, word, replacement) {
@@ -346,20 +469,19 @@ function speechMatches(text, target) {
 
 function renderEnglishStory(item) {
   const sentence = englishSentence(item);
-  $('#lessonContent').innerHTML = `${englishStageNav('听')}<span class="task-label">${item.unitIndex >= 30 ? '拼读故事开场' : '情境故事开场'}</span><div class="english-story-scene stage-${Math.floor(item.unitIndex / 10) + 1}"><span class="scene-stars">✦ · ✦</span><span class="story-fox">🦊</span><span class="english-story-item">${item.emoji}</span><span class="scene-bushes">♧ ♧ ♧ ♧</span></div><h2 class="question-title">先看画面，再听小狐狸说</h2><button class="listen-story" data-speak-now="${sentence}" data-lang="en-US"><span>🔊</span><b>${sentence}</b></button>${item.phonics ? `<div class="phonics-cue"><span>👂</span><b>${item.phonics}</b><small>先听音，再慢慢合起来读</small></div>` : ''}<p class="question-hint">先理解整句话，喜欢的话可以跟着说一遍。</p><button class="lesson-next" data-next-task>我听到了</button>`;
+  $('#lessonContent').innerHTML = `${englishStageNav('listen')}<div class="english-scene-shell">${englishCartoonScene(item,{caption:sentence,variant:0})}${englishIconButton('listen',`data-speak-now="${escapeHTML(sentence)}" data-lang="en-US"`,'Listen again')}</div>${englishIconButton('next','data-next-task','Continue')}`;
   speak(sentence, 'en-US');
 }
 
 function renderEnglishSpeak(item) {
-  $('#lessonContent').innerHTML = `${englishStageNav('说')}<span class="task-label">开口模仿</span><div class="speak-hero"><span>👄</span><b>${item.word}</b><small>${item.phonics || item.meaning}</small></div><p class="question-hint">先听一次，再像小狐狸一样说出来。录好后可以回听和重录。</p><button class="listen-round" data-speak-now="${item.word}" data-lang="en-US">🔊</button><div class="speaking-actions"><button class="microphone-button" data-start-speaking="${item.word}" data-speaking-lang="en-US">🎙️ 点一下，说 ${item.word}</button><button class="soft-button" data-finish-speaking>我已经跟读了</button></div><div id="speakingFeedback"></div>`;
+  $('#lessonContent').innerHTML = `${englishStageNav('speak')}<div class="english-speaking-stage">${englishCartoonScene(item,{caption:item.word,variant:2})}<div class="english-speech-controls">${englishIconButton('listen',`data-speak-now="${escapeHTML(item.word)}" data-lang="en-US"`,'Listen')}${englishIconButton('record',`data-start-speaking="${escapeHTML(item.word)}" data-speaking-lang="en-US"`,'Record')}<button class="english-action-button done" data-finish-speaking aria-label="Continue">✓</button></div>${item.phonics ? `<small class="english-phonics-line">${escapeHTML(item.phonics)}</small>` : ''}<div id="speakingFeedback"></div></div>`;
   speak(item.word, 'en-US');
 }
 
-function renderEnglishRead(item) {
-  const lines = englishReaderLines(item);
-  const mark = line => replaceEnglishWord(line, item.word, `<strong>${item.word}</strong>`);
-  const narration = lines.join(' ');
-  $('#lessonContent').innerHTML = `${englishStageNav('读')}<span class="task-label">${item.unitIndex >= 30 ? '可解码小读本' : '迷你分级绘本'}</span><div class="mini-reader"><div class="reader-picture"><span class="reader-fox">🦊</span><span>${item.emoji}</span><i>${item.unit.title}</i></div><div class="reader-pages">${lines.map((line, index) => `<p><small>${index + 1}</small>${mark(line)}</p>`).join('')}</div><button data-speak-now="${narration}" data-lang="en-US">🔊 点读整页</button></div><p class="teach-note">先看图猜意思，再点读整页。能听懂并找到目标词，就是有效阅读；不要求逐字翻译。</p><button class="lesson-next" data-next-task>读完这一页</button>`;
+function renderEnglishRead(task) {
+  const item = task.item; const lines = englishReaderLines(item); const page = Math.min(task.page || 0,lines.length - 1); const line = lines[page];
+  $('#lessonContent').innerHTML = `${englishStageNav('read')}<div class="english-reader-stage"><div class="english-page-dots">${lines.map((_,index)=>`<i class="${index === page ? 'active' : ''}"></i>`).join('')}</div>${englishCartoonScene(item,{caption:line,variant:page})}${englishIconButton('listen',`data-speak-now="${escapeHTML(line)}" data-lang="en-US"`,'Listen to this page')}</div>${englishIconButton('next','data-next-task','Next page')}`;
+  speak(line,'en-US');
 }
 
 function escapeHTML(value) { return String(value).replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char])); }
@@ -384,23 +506,27 @@ function finishVoiceRecording(message = '录好了，先听听自己的声音，
 function renderVoiceRecordingReview(session) {
   if (session.canceled || voiceRecording !== session) return;
   const feedback = $('#speakingFeedback'); if (!feedback) return;
+  if (session.lang.toLowerCase().startsWith('en')) {
+    feedback.innerHTML = `<div class="speaking-feedback ${session.className}">${session.message}<small class="recognition-note">Word check only · listen and compare the sounds.</small></div><div class="recording-review english-recording-review"><audio id="recordedVoice" controls preload="metadata" src="${session.url}"></audio><div>${englishIconButton('listen',`data-speak-now="${escapeHTML(session.target)}" data-lang="${session.lang}"`,'Model voice')}<button class="english-action-button playback" data-play-recording aria-label="Play my voice">▶</button><button class="english-action-button record" data-record-again aria-label="Record again">●</button><button class="english-action-button done" data-next-task aria-label="Continue">✓</button></div></div>`;
+    return;
+  }
   feedback.innerHTML = `<div class="speaking-feedback ${session.className}">${session.message}<small class="recognition-note">自动识别只帮助发现是否说出了目标词，不代表专业发音评分。</small></div><div class="recording-review"><div><span>🎧</span><div><b>听听我的声音</b><small>先听示范，再回听自己：目标词是否完整、声音是否清楚</small></div></div><audio id="recordedVoice" controls preload="metadata" src="${session.url}"></audio><div><button class="soft-button" data-speak-now="${escapeHTML(session.target)}" data-lang="${session.lang}">🔊 听示范</button><button class="soft-button" data-play-recording>▶ 回听录音</button><button class="microphone-button" data-record-again>🎙️ 再录一次</button><button class="lesson-next" data-next-task>继续学习</button></div></div>`;
 }
 
 async function startSpeakingCheck(target, lang = 'en-US') {
   cancelVoiceRecording(); stopSpeech();
-  const feedback = $('#speakingFeedback');
+  const feedback = $('#speakingFeedback'); const english = lang.toLowerCase().startsWith('en');
   if (!navigator.mediaDevices?.getUserMedia || !('MediaRecorder' in window)) {
-    feedback.innerHTML = `<div class="speaking-feedback gentle">当前浏览器不能保存录音。请换用最新版 Chrome 或 Safari，并允许麦克风权限。</div><button class="lesson-next" data-next-task>继续</button>`; return;
+    feedback.innerHTML = english ? `<div class="speaking-feedback gentle">Microphone unavailable.</div><button class="english-action-button done" data-next-task aria-label="Continue">✓</button>` : `<div class="speaking-feedback gentle">当前浏览器不能保存录音。请换用最新版 Chrome 或 Safari，并允许麦克风权限。</div><button class="lesson-next" data-next-task>继续</button>`; return;
   }
-  feedback.innerHTML = `<div class="speaking-feedback listening">正在申请麦克风，请允许后读出 <b>${escapeHTML(target)}</b>…</div>`;
+  feedback.innerHTML = `<div class="speaking-feedback listening">${english ? `🎙️ ${escapeHTML(target)}` : `正在申请麦克风，请允许后读出 <b>${escapeHTML(target)}</b>…`}</div>`;
   let stream;
   try { stream = await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:true, noiseSuppression:true, autoGainControl:true } }); }
-  catch (_) { feedback.innerHTML = `<div class="speaking-feedback gentle">没有获得麦克风权限。可以在浏览器地址栏的网站设置中允许麦克风后再试。</div><button class="lesson-next" data-next-task>继续</button>`; return; }
+  catch (_) { feedback.innerHTML = english ? `<div class="speaking-feedback gentle">Please allow the microphone.</div><button class="english-action-button done" data-next-task aria-label="Continue">✓</button>` : `<div class="speaking-feedback gentle">没有获得麦克风权限。可以在浏览器地址栏的网站设置中允许麦克风后再试。</div><button class="lesson-next" data-next-task>继续</button>`; return; }
 
   let recorder;
   try { recorder = new MediaRecorder(stream); }
-  catch (_) { stream.getTracks().forEach(track => track.stop()); feedback.innerHTML = `<div class="speaking-feedback gentle">这台设备暂时不能创建录音文件，请更新浏览器后再试。</div><button class="lesson-next" data-next-task>继续</button>`; return; }
+  catch (_) { stream.getTracks().forEach(track => track.stop()); feedback.innerHTML = english ? `<div class="speaking-feedback gentle">Recording unavailable.</div><button class="english-action-button done" data-next-task aria-label="Continue">✓</button>` : `<div class="speaking-feedback gentle">这台设备暂时不能创建录音文件，请更新浏览器后再试。</div><button class="lesson-next" data-next-task>继续</button>`; return; }
   const session = { target,lang,stream,recorder,chunks:[],recognition:null,url:'',message:'',className:'gentle',finishing:false,canceled:false,timer:null };
   voiceRecording = session;
   recorder.ondataavailable = event => { if (event.data.size) session.chunks.push(event.data); };
@@ -409,23 +535,24 @@ async function startSpeakingCheck(target, lang = 'en-US') {
     const blob = new Blob(session.chunks,{type:recorder.mimeType || 'audio/webm'}); session.url = URL.createObjectURL(blob); renderVoiceRecordingReview(session);
   };
   recorder.start();
-  feedback.innerHTML = `<div class="speaking-feedback listening"><span class="recording-pulse"></span>正在录音：请清楚地说 <b>${escapeHTML(target)}</b></div><button class="soft-button stop-recording" data-stop-recording>■ 说完了</button>`;
+  feedback.innerHTML = english ? `<div class="speaking-feedback listening"><span class="recording-pulse"></span><b>${escapeHTML(target)}</b></div><button class="english-action-button stop-recording" data-stop-recording aria-label="Stop recording">■</button>` : `<div class="speaking-feedback listening"><span class="recording-pulse"></span>正在录音：请清楚地说 <b>${escapeHTML(target)}</b></div><button class="soft-button stop-recording" data-stop-recording>■ 说完了</button>`;
 
   const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!Recognition) {
-    session.message = '录音完成。当前浏览器不能自动判断，请回听后和示范音做比较。';
+    session.message = english ? 'Now listen to your voice.' : '录音完成。当前浏览器不能自动判断，请回听后和示范音做比较。';
     session.timer = setTimeout(() => finishVoiceRecording(session.message,'gentle'),5000); return;
   }
   const recognition = new Recognition(); session.recognition = recognition; recognition.lang = lang; recognition.interimResults = false; recognition.maxAlternatives = 5;
   recognition.onresult = event => {
-    const heard = [...event.results[0]].map(result => result.transcript.toLowerCase()); const matched = heard.some(text => speechMatches(text,target));
+    const alternatives = [...event.results[0]]; const heard = alternatives.map(result => result.transcript.toLowerCase());
+    const matched = alternatives.some(result => speechMatches(result.transcript,target) && (!result.confidence || result.confidence >= .45));
     const heardText = escapeHTML(heard[0] || '');
-    finishVoiceRecording(matched ? `系统识别到了“${heardText}”。再听示范并回听自己的声音吧！` : `系统听到“${heardText}”，暂时没有识别出目标词“${escapeHTML(target)}”。回听后可以慢慢再录一次。`,matched ? 'success' : 'gentle');
+    finishVoiceRecording(english ? (matched ? `I heard “${escapeHTML(target)}”. Now compare both sounds.` : `I heard “${heardText}”. Listen and try “${escapeHTML(target)}” again.`) : (matched ? `系统识别到了“${heardText}”。再听示范并回听自己的声音吧！` : `系统听到“${heardText}”，暂时没有识别出目标词“${escapeHTML(target)}”。回听后可以慢慢再录一次。`),matched ? 'success' : 'gentle');
   };
-  recognition.onerror = event => { if (!session.finishing) finishVoiceRecording(event.error === 'no-speech' ? '没有听到清楚的单词。先回听录音，再慢慢重录一次。' : '自动判断暂时不可用，请回听录音后自己比较。','gentle'); };
-  recognition.onend = () => { if (!session.finishing) finishVoiceRecording('录音完成。自动判断没有返回结果，请回听后和示范音比较。','gentle'); };
-  try { recognition.start(); } catch (_) { session.timer = setTimeout(() => finishVoiceRecording('录音完成，请回听后和示范音比较。','gentle'),5000); return; }
-  session.timer = setTimeout(() => finishVoiceRecording('录音已自动结束。请回听自己的声音，再决定是否重录。','gentle'),6500);
+  recognition.onerror = event => { if (!session.finishing) finishVoiceRecording(english ? 'Listen and try once more.' : (event.error === 'no-speech' ? '没有听到清楚的单词。先回听录音，再慢慢重录一次。' : '自动判断暂时不可用，请回听录音后自己比较。'),'gentle'); };
+  recognition.onend = () => { if (!session.finishing) finishVoiceRecording(english ? 'Now listen to your voice.' : '录音完成。自动判断没有返回结果，请回听后和示范音比较。','gentle'); };
+  try { recognition.start(); } catch (_) { session.timer = setTimeout(() => finishVoiceRecording(english ? 'Now listen to your voice.' : '录音完成，请回听后和示范音比较。','gentle'),5000); return; }
+  session.timer = setTimeout(() => finishVoiceRecording(english ? 'Now listen to your voice.' : '录音已自动结束。请回听自己的声音，再决定是否重录。','gentle'),6500);
 }
 
 function chineseStageNav(active) {
@@ -433,7 +560,7 @@ function chineseStageNav(active) {
 }
 
 function logicStageNav(active) {
-  return `<div class="logic-stage-nav">${['探','摆','想','说','闯'].map(name => `<span class="${name === active ? 'active' : ''}">${name}</span>`).join('<i>·</i>')}</div>`;
+  return `<div class="logic-rotate-hint"><span>📱</span><div><b>横过手机，画面更宽</b><small>也可以点顶部“横屏”按钮</small></div></div><div class="logic-stage-nav">${['探','教','摆','想','说','闯'].map(name => `<span class="${name === active ? 'active' : ''}">${name}</span>`).join('<i>·</i>')}</div>`;
 }
 
 function logicFamily(type) {
@@ -453,8 +580,8 @@ function logicStoryCopy(type) {
     category: ['飞船里的物品散了一地，我们来整理。', '想想它们是什么、有什么用。'],
     count: ['小行星需要刚刚好的能量球。', '一个一个地点数，数过的不要重复。'],
     compare: ['两艘飞船都在收集星星，哪艘更多呢？', '把两边一一配对，看看谁还有剩下。'],
-    ab: ['星球灯在按顺序闪烁。', '把规律读出来：红、蓝、红、蓝。'],
-    complex: ['这次的信号会连续闪两下。', '慢慢读一遍，再找重复的一组。'],
+    ab: ['生活中的小伙伴在轮流排队。', '指着图片慢慢读，找出两个一组的规律。'],
+    complex: ['这次每组会有三个小伙伴。', '慢慢读一遍，再找完整的重复小组。'],
     space: ['机器人正在寻找飞船里的位置。', '先找到参照物，再判断方向。'],
     order: ['出发前要按顺序完成准备。', '想想哪件事先发生，哪件事后发生。'],
     match: ['每位小伙伴都需要一份刚刚好的装备。', '一个对一个配起来，看看够不够。'],
@@ -467,15 +594,177 @@ function logicStoryCopy(type) {
   return stories[logicFamily(type)] || stories.reason;
 }
 
+function logicDemoContent(type) {
+  const demos = {
+    same:{visual:'🔴　🔴　🔵',steps:['先看颜色，找到颜色一样的。','再看形状和方向，不能只看一个地方。','所有特征都一样，才叫完全相同。']},
+    different:{visual:'🍎　🍎　🍐',steps:['先把三个图案排在一起。','从颜色、形状、种类逐项比较。','只有一个特征不同的，就是答案。']},
+    category:{visual:'🍎 🍌　│　🚗',steps:['先说一说每个物品是什么。','找到共同点，比如都是水果。','不符合共同点的物品放到另一边。']},
+    count:{visual:'①　②　③　④',steps:['从一边开始，一个一个地点。','点过一个就做一个小记号。','最后说到的数，就是一共有多少。']},
+    compare:{visual:'🍎🍎🍎<br>🍐🍐',steps:['把两组从同一个位置排好。','一个苹果对一个梨，逐个配对。','还有剩下的一组更多，没有剩下一样多。']},
+    ab:{visual:'🔴 🔵　🔴 🔵　❓',steps:['先看第一种和第二种图案。','用小手指着读：第一种、第二种，再重复一次。','它们轮流出现，沿着同样顺序找到空缺图案。']},
+    complex:{visual:'🟨 🟨 🟩　🟨 🟨 ❓',steps:['先慢慢看完整串图案。','找到三个图案组成的重复小组。','新一组已经出现前两个，接着选择第三个。']},
+    space:{visual:'🐰　📦',steps:['先找到题目说的参照物。','站在同一个方向观察位置。','再判断上、下、左、右、里面或外面。']},
+    order:{visual:'🌱　🌿　🌳',steps:['先找事情开始时的样子。','观察它怎样一步一步变化。','按先发生、后发生排好顺序。']},
+    match:{visual:'🐰🥕　🐰🥕　🐰❓',steps:['每个伙伴只配一个物品。','配过的不能重复，也不能漏掉。','看看有没有伙伴或物品剩下来。']},
+    calculate:{visual:'🍎🍎　＋　🍎',steps:['先把故事里的数量摆出来。','来了、合起来用加法；拿走用减法。','数一数变化以后还剩多少。']},
+    geometry:{visual:'🔺　🟨　⚪',steps:['先看图形有几条边、几个角。','立体物体还要看面和能不能滚动。','不看颜色，只按图形特征判断。']},
+    measure:{visual:'▰▰▰　│　▰▰▰▰▰',steps:['把两件物品的一端对齐。','使用一样大小的格子或单位。','数格子再比较，格子多的更长。']},
+    statistics:{visual:'🍎 ●●●<br>🍌 ●●',steps:['先看每一行代表什么。','数清每一项有几个点。','比较数量，再回答最多、最少或一样多。']},
+    reason:{visual:'🔴　🟦　🔺',steps:['把题目的条件一个一个说出来。','不符合一个条件的先排除。','检查剩下的答案是否符合全部条件。']}
+  };
+  return demos[logicFamily(type)] || demos.reason;
+}
+
+const PATTERN_THEMES = [
+  { id:'road', scene:'road', a:'car-coral', b:'car-mint', voice:'小汽车' },
+  { id:'birds', scene:'sky', a:'bird-cocoa', b:'bird-sun', voice:'小鸟' },
+  { id:'flight', scene:'sky', a:'plane', b:'balloon', voice:'天空伙伴' },
+  { id:'garden', scene:'garden', a:'butterfly', b:'bee', voice:'花园伙伴' },
+  { id:'ocean', scene:'ocean', a:'fish', b:'jelly', voice:'海洋伙伴' },
+  { id:'space', scene:'space', a:'rocket', b:'planet', voice:'太空伙伴' },
+  { id:'play', scene:'playground', a:'kite', b:'ball', voice:'游乐场玩具' },
+  { id:'forest', scene:'forest', a:'mushroom', b:'flower', voice:'森林伙伴' }
+];
+
+function patternArt(name) {
+  return `<span class="pattern-art ${name}" aria-hidden="true"><i></i><b></b><em></em></span>`;
+}
+
+function objectArt(name, extra = '') {
+  return `<span class="object-art ${name} ${extra}" aria-hidden="true"><i></i><b></b><em></em></span>`;
+}
+
+const OBJECT_PICTURE_MAP = {
+  '🍎':'apple-red','🍏':'apple-green','🍐':'pear','🍌':'banana','🍉':'watermelon','🫐':'berry','🍓':'strawberry','🍇':'grapes',
+  '🐰':'rabbit','🐼':'panda','🐶':'dog','🐱':'cat','🐘':'elephant','🐭':'mouse','🦆':'duck',
+  '🚗':'car-coral','🚙':'car-mint','🚌':'bus','🐟':'fish','🐠':'fish','🐦':'bird-sun','🦋':'butterfly','⚽':'ball','🎈':'balloon',
+  '🏠':'house-small','🏡':'house-large','⛺':'tent','🌳':'tree','📦':'box','🧢':'hat','👕':'shirt','👟':'shoe',
+  '🍰':'cake','🍪':'cookie','🥛':'cup','🫗':'pitcher','🪣':'bucket','🧊':'cube','🎁':'gift','🥫':'cylinder',
+  '🔴':'circle-red','🔵':'circle-blue','🟡':'circle-yellow','🟢':'circle-green','🟣':'circle-purple','⚪':'circle-white',
+  '🔺':'triangle-red','🟨':'square-yellow','🟦':'square-blue','⭐':'star','🌟':'star','🌙':'moon',
+  '🪥':'toothbrush','🛏️':'bed','🍽️':'plate','🌱':'sprout','🫘':'seed','🪨':'stone','🧥':'raincoat','🧱':'block','🪁':'kite'
+};
+
+const PATTERN_OBJECTS = new Set(['car-coral','car-mint','fish','bird-sun','butterfly','ball','balloon','kite']);
+
+function pictureToken(name, extra = '') {
+  return PATTERN_OBJECTS.has(name) ? patternArt(name) : objectArt(name,extra);
+}
+
+function relationPicture(kind, subject = 'rabbit', reference = 'box') {
+  const secondReference = kind === 'middle' ? `<span class="relation-reference second">${pictureToken(reference)}</span>` : '';
+  return `<span class="logic-relation relation-${kind}" aria-hidden="true"><span class="relation-subject">${pictureToken(subject)}</span><span class="relation-reference">${pictureToken(reference)}</span>${secondReference}<i></i></span>`;
+}
+
+function scaledPicture(name, scale) {
+  return `<span class="logic-size-picture size-${scale}" aria-hidden="true">${pictureToken(name)}</span>`;
+}
+
+function capacityPicture(level, vessel = 'cup') {
+  return `<span class="logic-capacity vessel-${vessel} fill-${level}" aria-hidden="true"><i></i><b></b></span>`;
+}
+
+function heightPicture(level) {
+  return `<span class="logic-block-stack stack-${level}" aria-hidden="true">${Array.from({length:level},() => '<i></i>').join('')}</span>`;
+}
+
+function nextPatternTheme(history = new Set()) {
+  let index = Number(state.patternThemeCursor || 0) % PATTERN_THEMES.length;
+  for (let offset = 0; offset < PATTERN_THEMES.length; offset += 1) {
+    const candidate = (index + offset) % PATTERN_THEMES.length;
+    if (!history.has(PATTERN_THEMES[candidate].id)) { index = candidate; break; }
+  }
+  const theme = PATTERN_THEMES[index]; history.add(theme.id);
+  state.patternThemeCursor = (index + 1) % PATTERN_THEMES.length; saveState();
+  return theme;
+}
+
+function buildPatternQuestion(type, history = new Set()) {
+  const theme = nextPatternTheme(history); const complex = type === 'complex';
+  const names = complex ? [theme.a,theme.a,theme.b,theme.a,theme.a] : [theme.a,theme.b,theme.a,theme.b,theme.a];
+  const choices = shuffle([theme.a,theme.b]).map(name => ({ name, visual:patternArt(name) }));
+  const display = `<div class="pattern-board scene-${theme.scene}" data-pattern-theme="${theme.id}"><div class="pattern-row">${names.map((name,index) => `<span class="pattern-item" style="--item-delay:${index * 70}ms">${patternArt(name)}</span>`).join('')}<span class="pattern-slot" data-pattern-slot aria-label="空缺位置"><i></i></span></div></div>`;
+  return { title:complex ? '仔细听，找出重复小组后选择空缺图案' : '仔细听，看看两个图案怎样轮流出现，选择空缺图案', hint:'先用小手指着图案慢慢读一遍', speak:complex ? `看看${theme.voice}的排列。先找出三个一组的重复规律，再选出空缺位置。` : `看看${theme.voice}的排列。它们一个接一个轮流出现，空缺的位置应该是谁？`, display, visualOnly:true, patternMode:true, themeId:theme.id, correct:choices.findIndex(choice => choice.name === theme.b), options:choices.map(({visual}) => ({visual})) };
+}
+
+const LOGIC_SCENE_POOLS = {
+  same:['playroom','market','classroom','park','picnic'], different:['market','park','playroom','classroom','street'],
+  category:['market','kitchen','classroom','picnic','farm'], count:['farm','bakery','picnic','pond','market'],
+  compare:['market','playroom','park','picnic','farm'], match:['kitchen','classroom','picnic','bedroom','market'],
+  order:['bedroom','bathroom','kitchen','garden','classroom'], space:['park','bedroom','classroom','street','playground'],
+  calculate:['bakery','market','pond','busstop','picnic'], geometry:['workshop','classroom','playground','playroom','park'],
+  measure:['workshop','kitchen','garden','classroom','market'], statistics:['market','farm','classroom','garden','playroom'],
+  reason:['park','street','classroom','market','playground']
+};
+
+const LIFE_WORD_PICTURES = {
+  '刷牙':'🪥','睡觉':'🛏️','吃晚饭':'🍽️','发芽':'🌱','回到种子袋':'🫘','变成石头':'🪨','洗手':'🧼','穿雨衣':'🧥',
+  '苹果':'🍎','香蕉':'🍌','葡萄':'🍇','小猫':'🐱','小狗':'🐶','小兔':'🐰','小鸟':'🐦','小鸭':'🦆','小鱼':'🐟','皮球':'⚽','积木':'🧱','风筝':'🪁',
+  '一样多':'⚖️','每格一样长':'▰ ▰ ▰','比较容量':'🥛 🫗 🪣','从同一地面开始':'▰<br>▰▰<br>▰▰▰','沿中线对折':'🦋 │ 🦋','半圈':'↻'
+};
+
+function lifeVisualContent(raw) {
+  let content = String(raw ?? '');
+  Object.entries(LIFE_WORD_PICTURES).sort((a,b) => b[0].length - a[0].length).forEach(([word,picture]) => { content = content.split(word).join(picture); });
+  Object.entries(OBJECT_PICTURE_MAP).forEach(([symbol,name]) => { content = content.split(symbol).join(pictureToken(name)); });
+  content = content.replace(/和/g,'＋').replace(/[\u3400-\u9fff]+/g,'').replace(/　+/g,'　').trim();
+  const objectCount = (content.match(/class="(?:object|pattern)-art/g) || []).length;
+  if (objectCount > 3) content = `<span class="logic-object-cluster ${objectCount > 10 ? 'dense' : ''}">${content}</span>`;
+  return content || '●';
+}
+
+function nextLogicScene(type, history = new Set()) {
+  const family = logicFamily(type); const pool = LOGIC_SCENE_POOLS[family] || LOGIC_SCENE_POOLS.reason;
+  const start = Number(state.logicSceneCursor || 0) % pool.length;
+  let scene = pool[start];
+  for (let offset = 0; offset < pool.length; offset += 1) {
+    const candidate = pool[(start + offset) % pool.length];
+    if (!history.has(`${family}:${candidate}`)) { scene = candidate; break; }
+  }
+  history.add(`${family}:${scene}`); state.logicSceneCursor = (start + 1) % pool.length; saveState();
+  return scene;
+}
+
+function lifePicture(raw, scene, variant = 0) {
+  const content = lifeVisualContent(raw); const dense = content.replace(/<[^>]*>/g,'').length > 8 ? ' dense' : '';
+  return `<span class="logic-life-picture scene-${scene} variant-${variant % 3}${dense}"><span class="life-picture-prop">${content}</span><i></i><b></b></span>`;
+}
+
+function enrichLogicQuestion(question, type) {
+  if (question.patternMode) return question;
+  const history = lesson?.logicSceneHistory || gameSession?.logicSceneHistory || new Set();
+  const scene = nextLogicScene(type,history); question.sceneId = scene; question.visualOnly = true;
+  question.options = question.options.map((option,index) => ({ ...option, visual:option.richVisual ? option.visual : lifePicture(option.visual,scene,index), label:'' }));
+  if (question.display) question.display = `<div class="logic-life-display scene-${scene}"><span class="life-display-prop">${lifeVisualContent(question.display)}</span><i></i><b></b></div>`;
+  return question;
+}
+
+function logicDemoVisual(question, step = 2) {
+  if (question.patternMode) return question.display;
+  const display = question.display ? `<div class="logic-demo-focus">${question.display}</div>` : '';
+  const options = `<div class="logic-demo-options">${question.options.slice(0,3).map((option,index) => `<span class="demo-option ${index === question.correct ? 'is-answer' : ''}" style="--demo-delay:${index * 120}ms">${option.visual}</span>`).join('')}</div>`;
+  return `<div class="logic-demo-workspace demo-phase-${step}">${display}${options}</div>`;
+}
+
+function renderLogicDemo(task) {
+  const demo = logicDemoContent(task.item.type); const step = Math.min(task.demoStep || 0,demo.steps.length - 1); const last = step === demo.steps.length - 1;
+  const narration = `第${step + 1}步。${demo.steps[step]}`;
+  task.demoQuestion ||= uniqueLogicQuestion(task.item.type,lesson.logicQuestionHistory);
+  const visual = logicDemoVisual(task.demoQuestion,step);
+  $('#lessonContent').innerHTML = `${logicStageNav('教')}<div class="logic-demo-board visual-only-demo ${task.demoQuestion.patternMode ? 'pattern-demo' : 'life-demo'}"><div class="logic-demo-scene"><span class="demo-robot" aria-hidden="true">🤖</span><div class="demo-visual">${visual}</div><i></i></div><div class="logic-demo-copy"><span class="sr-only">${demo.steps[step]}</span><div class="demo-step-dots" aria-label="第 ${step + 1} 步，共 ${demo.steps.length} 步">${demo.steps.map((_,index) => `<i class="${index <= step ? 'done' : ''}"></i>`).join('')}</div><button class="demo-listen icon-only-audio" data-speak-now="${escapeHTML(narration)}" data-lang="zh-CN" aria-label="再听一遍">🔊</button><button class="lesson-next icon-next" ${last ? 'data-next-task' : 'data-next-demo-step'} aria-label="${last ? '开始练习' : '下一步'}">›</button></div></div>`;
+  speak(narration,'zh-CN');
+}
+
 function renderLogicStory(item) {
   const copy = logicStoryCopy(item.type);
   $('#lessonContent').innerHTML = `${logicStageNav('探')}<span class="task-label">星球任务</span><div class="logic-story-scene"><span class="logic-moon">●</span><span class="logic-story-robot">🤖</span><span class="logic-story-tool">${item.unit.icon}</span><span class="logic-ground-dots">• • • • •</span></div><h2 class="question-title">${copy[0]}</h2><p class="question-hint">${copy[1]}</p><button class="lesson-next" data-next-task>接受任务</button>`;
-  speak(copy[0]);
+  speak(`${copy[0]}。${copy[1]}`);
 }
 
 function renderLogicManipulate(task) {
-  const question = generateLogicQuestion(task.item.type); task.question = question;
-  $('#lessonContent').innerHTML = `${logicStageNav('摆')}<span class="task-label">动手摆一摆</span><h2 class="question-title">${question.title}</h2><p class="question-hint">点一个小教具，把它放进中间的思考盘。</p>${question.display ? `<div class="logic-sequence">${question.display}</div>` : ''}<div class="thinking-mat" id="thinkingMat"><span>把答案放到这里</span></div><div class="manipulative-tray">${question.options.map((option, index) => `<button data-manip-index="${index}"><span>${option.visual}</span>${option.label ? `<small>${option.label}</small>` : ''}</button>`).join('')}</div><div id="manipFeedback"></div>`;
+  const question = nextLogicQuestion(task.item.type); task.question = question; lesson.lastLogicQuestion = question; const narration = logicQuestionNarration(question,question.patternMode ? '点下面的图案，把它送到空缺位置。' : '点一个小教具，把它放进中间的思考盘。');
+  $('#lessonContent').innerHTML = `<div class="logic-visual-question ${question.patternMode ? 'pattern-question-stage' : ''}"><span class="sr-only">${question.title}</span><button class="logic-question-audio icon-only-audio" data-speak-now="${escapeHTML(narration)}" data-lang="zh-CN" aria-label="再听题目">🔊</button>${question.display ? `<div class="logic-sequence ${question.patternMode ? 'pattern-sequence-shell' : ''}">${question.display}</div>` : ''}${question.patternMode ? '' : '<div class="thinking-mat" id="thinkingMat" aria-label="答案放置区"><span aria-hidden="true">◎</span></div>'}<div class="manipulative-tray ${question.patternMode ? 'pattern-choice-grid' : ''}">${question.options.map((option, index) => `<button data-manip-index="${index}" aria-label="选项 ${index + 1}"><span>${option.visual}</span></button>`).join('')}</div><div id="manipFeedback"></div></div>`;
+  speak(narration,'zh-CN');
 }
 
 function logicReason(type) {
@@ -486,8 +775,10 @@ function logicReason(type) {
 }
 
 function renderLogicExplain(task) {
-  const reasons = logicReason(task.item.type); task.reasonCorrect = 0;
-  $('#lessonContent').innerHTML = `${logicStageNav('说')}<span class="task-label">小老师说方法</span><span class="explain-robot">🤖</span><h2 class="question-title">刚才你是怎么想的？</h2><p class="question-hint">选一句理由，再跟着熊猫团团大声说出来。</p><div class="reason-options">${shuffle(reasons.map((text, index) => ({ text, correct: index === 0 }))).map((reason, index) => `<button data-reason-index="${index}" data-reason-correct="${reason.correct}">${reason.text}</button>`).join('')}</div><div id="reasonFeedback"></div>`;
+  const reason = logicReason(task.item.type)[0]; const recap = lesson.lastLogicQuestion || task.demoQuestion;
+  const narration = `刚才我们是这样想的。${reason}。请跟着说一遍。`;
+  $('#lessonContent').innerHTML = `<div class="logic-explain-visual"><span class="sr-only">${narration}</span><button class="logic-question-audio icon-only-audio" data-speak-now="${escapeHTML(narration)}" data-lang="zh-CN" aria-label="再听方法">🔊</button><div class="logic-recap-picture">${recap ? logicDemoVisual(recap,2) : ''}</div><div class="visual-method-track" aria-hidden="true"><span>◉</span><i>›</i><span>⇄</span><i>›</i><span>✓</span></div><button class="lesson-next icon-next" data-next-task aria-label="去挑战">›</button></div>`;
+  speak(narration,'zh-CN');
 }
 
 const CHINESE_SCENE_MOTIFS = ['🌱','✨','☁️','🌈','🍃','🫧','🌼','⭐','🪁','🪨'];
@@ -541,16 +832,21 @@ function chinesePhrases(item) {
 
 function renderTeach(item) {
   const subject = CURRICULUM[item.subject];
+  if (item.subject === 'english') {
+    $('#lessonContent').innerHTML = `${englishStageNav('look')}<div class="english-word-stage">${englishCartoonScene(item,{caption:item.word,variant:1})}<div class="english-word-controls">${englishIconButton('listen',`data-speak-now="${escapeHTML(item.word)}" data-lang="en-US"`,'Listen to the word')}${item.phonics ? `<small>${escapeHTML(item.phonics)}</small>` : ''}</div></div>${englishIconButton('next','data-next-task','Continue')}`;
+    speak(item.word,'en-US');
+    return;
+  }
   if (item.subject === 'logic') {
     const info = logicTeaching(item.type);
     $('#lessonContent').innerHTML = `<span class="task-label">认识新方法 · ${subject.name}</span><span class="teach-emoji">${item.unit.icon}</span><h2 class="teach-word">${item.unit.title}</h2><p class="teach-meaning">${item.unit.goal}</p><div class="teach-note">${info}</div><button class="lesson-next" data-next-task>我明白了，试一试</button>`;
     speak(`${item.unit.title}。${item.unit.goal}`);
   } else {
-    const isEnglish = item.subject === 'english'; const pronunciation = isEnglish ? item.phonics : item.pinyin;
-    const note = isEnglish ? `看着图片听一听：${item.meaning}，英语说 ${item.word}。先听懂，不要求孩子马上拼写。` : `“${item.word}”和${item.meaning}有关。先看图理解意思，再观察这个字的样子。`;
-    const stage = isEnglish ? englishStageNav('看') : chineseStageNav('认');
-    $('#lessonContent').innerHTML = `${stage}<span class="task-label">认识新朋友 · ${subject.name}</span><span class="teach-emoji">${item.emoji}</span><h2 class="teach-word">${item.word}</h2>${pronunciation ? `<p class="teach-pronunciation">${pronunciation}</p>` : ''}<p class="teach-meaning">${item.meaning}</p><button class="listen-round" data-speak-now="${item.word}" data-lang="${isEnglish ? 'en-US' : 'zh-CN'}">🔊</button><div class="teach-note">${note}</div><button class="lesson-next" data-next-task>${isEnglish ? '我看懂了' : '去练一练'}</button>`;
-    speak(item.word, isEnglish ? 'en-US' : 'zh-CN');
+    const pronunciation = item.pinyin;
+    const note = `“${item.word}”和${item.meaning}有关。先看图理解意思，再观察这个字的样子。`;
+    const stage = chineseStageNav('认');
+    $('#lessonContent').innerHTML = `${stage}<span class="task-label">认识新朋友 · ${subject.name}</span><span class="teach-emoji">${item.emoji}</span><h2 class="teach-word">${item.word}</h2>${pronunciation ? `<p class="teach-pronunciation">${pronunciation}</p>` : ''}<p class="teach-meaning">${item.meaning}</p><button class="listen-round" data-speak-now="${item.word}" data-lang="zh-CN">🔊</button><div class="teach-note">${note}</div><button class="lesson-next" data-next-task>去练一练</button>`;
+    speak(item.word,'zh-CN');
   }
 }
 
@@ -562,12 +858,21 @@ function logicTeaching(type) {
 
 function renderPractice(task) {
   const item = task.item; const stats = getStats(item.id);
-  const question = item.subject === 'logic' ? generateLogicQuestion(item.type) : generateLanguageQuestion(item, stats.score);
-  task.question = question;
-  const stage = item.subject === 'english' ? englishStageNav('玩') : item.subject === 'chinese' ? chineseStageNav('练') : logicStageNav(task.stage || '闯');
+  const question = item.subject === 'logic' ? nextLogicQuestion(item.type) : generateLanguageQuestion(item, stats.score);
+  task.question = question; if (item.subject === 'logic') lesson.lastLogicQuestion = question;
+  const stage = item.subject === 'english' ? englishStageNav('play') : item.subject === 'chinese' ? chineseStageNav('练') : logicStageNav(task.stage || '闯');
   const practiceName = item.subject === 'logic' ? (task.stage === '闯' ? '星际挑战' : '图像推理') : (stats.score < 2 ? '引导练习' : '独立挑战');
-  $('#lessonContent').innerHTML = `${stage}<span class="task-label">${practiceName} · ${CURRICULUM[item.subject].name}</span><h2 class="question-title">${question.title}</h2><p class="question-hint">${question.hint || '仔细观察，再做选择'}</p>${question.display ? `<div class="logic-sequence">${question.display}</div>` : ''}${question.speak ? `<button class="listen-round" data-speak-now="${question.speak}" data-lang="${question.lang}">🔊</button>` : ''}<div class="answer-grid">${question.options.map((option, index) => `<button class="answer-button" data-answer-index="${index}"><span class="answer-visual">${option.visual}</span>${option.label ? `<b>${option.label}</b>` : ''}</button>`).join('')}</div><div id="answerFeedback"></div>`;
-  if (question.autoSpeak) speak(question.speak, question.lang);
+  const logicNarration = item.subject === 'logic' ? logicQuestionNarration(question) : '';
+  const audioButton = item.subject === 'logic' ? `<button class="logic-question-audio icon-only-audio" data-speak-now="${escapeHTML(logicNarration)}" data-lang="zh-CN" aria-label="再听题目">🔊</button>` : question.speak ? `<button class="${item.subject === 'english' ? 'english-question-audio english-action-button listen' : 'listen-round'}" data-speak-now="${escapeHTML(question.speak)}" data-lang="${question.lang}" aria-label="Listen again">🔊</button>` : '';
+  if (item.subject === 'logic') {
+    $('#lessonContent').innerHTML = `<div class="logic-visual-question ${question.patternMode ? 'pattern-question-stage' : ''}"><span class="sr-only">${question.title}。${question.hint || ''}</span>${audioButton}${question.display ? `<div class="logic-sequence ${question.patternMode ? 'pattern-sequence-shell' : ''}">${question.display}</div>` : ''}<div class="answer-grid logic-picture-choices ${question.patternMode ? 'pattern-choice-grid' : ''}">${question.options.map((option, index) => `<button class="answer-button" data-answer-index="${index}" aria-label="选项 ${index + 1}"><span class="answer-visual">${option.visual}</span></button>`).join('')}</div><div id="answerFeedback"></div></div>`;
+  } else if (item.subject === 'english') {
+    $('#lessonContent').innerHTML = `${stage}<div class="english-listen-question"><span class="sr-only">Listen and choose.</span>${audioButton}<div class="answer-grid english-scene-choices">${question.options.map((option,index)=>`<button class="answer-button" data-answer-index="${index}" aria-label="Picture ${index + 1}"><span class="answer-visual">${option.visual}</span></button>`).join('')}</div><div id="answerFeedback"></div></div>`;
+  } else {
+    $('#lessonContent').innerHTML = `${stage}<span class="task-label">${practiceName} · ${CURRICULUM[item.subject].name}</span><h2 class="question-title">${question.title}</h2><p class="question-hint">${question.hint || '仔细观察，再做选择'}</p>${audioButton}${question.display ? `<div class="logic-sequence">${question.display}</div>` : ''}<div class="answer-grid">${question.options.map((option, index) => `<button class="answer-button" data-answer-index="${index}"><span class="answer-visual">${option.visual}</span>${option.label ? `<b>${option.label}</b>` : ''}</button>`).join('')}</div><div id="answerFeedback"></div>`;
+  }
+  if (item.subject === 'logic') speak(logicNarration,'zh-CN');
+  else if (question.autoSpeak) speak(question.speak, question.lang);
 }
 
 function generateLanguageQuestion(item, score) {
@@ -578,7 +883,8 @@ function generateLanguageQuestion(item, score) {
   const options = shuffle([item, ...pool]); const correct = options.findIndex(option => option.id === item.id);
   if (item.subject === 'english') {
     const listening = score >= 2;
-    return { title: listening ? '听一听，选出正确图片' : `哪个是“${item.meaning}”？`, hint: listening ? '可以反复点击小喇叭' : '把图片、意思和英语声音连起来', speak: item.word, lang: 'en-US', autoSpeak: true, correct, options: options.map(option => ({ visual: option.emoji, label: listening ? '' : option.word })) };
+    const spoken = listening ? englishSentence(item) : item.word;
+    return { title:'Listen and choose.', speak:spoken, lang:'en-US', autoSpeak:true, visualOnly:true, englishVisual:true, correct, options:options.map((option,index)=>({visual:englishCartoonScene(option,{variant:index,compact:true}),label:''})) };
   }
   const listening = score >= 2;
   return { title: listening ? '听一听，选出这个汉字' : `哪个字表示“${item.meaning}”？`, hint: listening ? '先听意思，再看字形' : `看图提示：${item.emoji}`, speak: listening ? item.meaning : item.word, lang: 'zh-CN', autoSpeak: listening, correct, options: options.map(option => ({ visual: option.word, label: score < 1 ? option.pinyin : '' })) };
@@ -586,6 +892,21 @@ function generateLanguageQuestion(item, score) {
 
 function generateLogicQuestion(type) {
   const pick = array => array[Math.floor(Math.random() * array.length)];
+  const context = lesson || gameSession;
+  const pickSet = array => {
+    if (!context) return pick(array);
+    context.logicVariantCursor ||= {};
+    const index = context.logicVariantCursor[type] || 0;
+    context.logicVariantCursor[type] = index + 1;
+    return array[index % array.length];
+  };
+  const pickTheme = array => {
+    if (!context) return pick(array);
+    context.logicObjectCursor ||= {};
+    const index = context.logicObjectCursor[type] || 0;
+    context.logicObjectCursor[type] = index + 1;
+    return array[index % array.length];
+  };
   const choiceQuestion = (title, options, correct, extra = {}) => {
     const shuffled = shuffle(options.map((option, index) => ({ option: typeof option === 'string' ? { visual:option } : option, correct:index === correct })));
     return { title, ...extra, correct:shuffled.findIndex(option => option.correct), options:shuffled.map(option => option.option) };
@@ -597,38 +918,55 @@ function generateLogicQuestion(type) {
     const options = shuffle([...new Set(values)]);
     return { title, display, correct: options.indexOf(answer), options: options.map(value => ({ visual: String(value) })) };
   };
-  if (type === 'same') { const target = pick(['🍎','🐟','🚗','🌟','🔺']); const options = shuffle([target, pick(['🍏','🐠','🚙','⭐','🔵']), pick(['🍌','🐰','🚌','🌙','🟨'])]); return { title:'找出完全相同的图案',display:target,correct:options.indexOf(target),options:options.map(x=>({visual:x}))}; }
-  if (type === 'different') { const groups = [['🍎','🍎','🍐'],['🐟','🐟','🐦'],['🔴','🔴','🟡'],['🚗','🚗','🚌']]; const row=pick(groups); const odd=row[2]; const options=shuffle(row); return {title:'哪一个和其他两个不一样？',correct:options.indexOf(odd),options:options.map(x=>({visual:x}))}; }
-  if (type === 'size') return choiceQuestion('哪一个最大？',[{visual:'🐘',label:'大象'},{visual:'🐰',label:'兔子'},{visual:'🐭',label:'老鼠'}],0,{hint:'把它们放在一起比一比'});
-  if (type === 'length') return choiceQuestion('哪一条最长？',['━━━━━━━━','━━━━━','━━'],0,{hint:'从同一个起点开始比较'});
-  if (type === 'color') { const rows=[['找出红色的图形','🔴','🔵','🟡'],['找出蓝色的图形','🔵','🟢','🔴'],['找出黄色的图形','🟡','🟣','🟢']]; const row=pick(rows); return choiceQuestion(row[0],row.slice(1),0); }
-  if (type === 'shape') { const rows=[['哪个是三角形？','🔺','🔵','🟨'],['哪个是圆形？','🔵','🔺','🟨'],['哪个是正方形？','🟨','🔵','🔺']]; const row=pick(rows); return choiceQuestion(row[0],row.slice(1),0); }
-  if (type === 'category') { const groups=[['🍎','🍌','🚗','哪个不是水果？'],['🐶','🐰','🧢','哪个不是动物？'],['👕','👟','🍰','哪个不是衣物？']]; const row=pick(groups); const opts=shuffle(row.slice(0,3).map((x,i)=>({x,correct:i===2}))); return {title:row[3],correct:opts.findIndex(x=>x.correct),options:opts.map(x=>({visual:x.x}))}; }
-  if (type === 'ab') { const pairs=pick([['🔴','🔵'],['🍎','🍌'],['🐰','🐼']]); return choiceQuestion('下一个是什么？',[pairs[0],pairs[1],'⭐'],0,{display:`${pairs[0]} ${pairs[1]} ${pairs[0]} ${pairs[1]} ❓`}); }
-  if (type === 'complex') { const pair=pick([['🔴','🔵'],['🟨','🟩'],['🍎','🍇']]); return choiceQuestion('找出复杂规律的下一个',[pair[0],pair[1],'⭐'],1,{display:`${pair[0]} ${pair[0]} ${pair[1]} ${pair[0]} ${pair[0]} ❓`}); }
-  if (['count','count5','count10','count20'].includes(type)) { const limit=type==='count5'?5:type==='count20'?20:type==='count10'?10:6; const floor=limit>10?11:1; const n=floor+Math.floor(Math.random()*(limit-floor+1)); return numberQuestion('一共有几个？','● '.repeat(n),n,floor,limit); }
+  if (type === 'same') { const target = pickTheme(['🍎','🐟','🚗','🌟','🔺']); const options = shuffle([target, pick(['🍏','🐠','🚙','⭐','🔵']), pick(['🍌','🐰','🚌','🌙','🟨'])]); return { title:'找出完全相同的图案',display:target,correct:options.indexOf(target),options:options.map(x=>({visual:x}))}; }
+  if (type === 'different') { const groups = [['🍎','🍎','🍐'],['🐟','🐟','🐦'],['🔴','🔴','🟡'],['🚗','🚗','🚌']]; const row=pickSet(groups); const odd=row[2]; const options=shuffle(row); return {title:'哪一个和其他两个不一样？',correct:options.indexOf(odd),options:options.map(x=>({visual:x}))}; }
+  if (type === 'size') { const sets=[{q:'哪一个苹果最大？',n:'apple-red',s:['sm','md','lg'],c:2},{q:'哪辆小汽车最小？',n:'car-coral',s:['sm','lg','md'],c:0},{q:'哪座小房子最大？',n:'house-small',s:['md','sm','lg'],c:2},{q:'哪只小兔最小？',n:'rabbit',s:['lg','sm','md'],c:1}]; const x=pickSet(sets); return choiceQuestion(x.q,x.s.map(scale=>({visual:scaledPicture(x.n,scale),richVisual:true})),x.c,{hint:'把同一种物品放在一起比较'}); }
+  if (type === 'length') { const sets=[{q:'哪一条最长？',o:['━━━━━━━━','━━━━━','━━'],c:0},{q:'哪一条最短？',o:['━━━━━━','━━','━━━━'],c:1},{q:'哪支铅笔最长？',o:['✏️━━','✏️━━━━━━','✏️━━━━'],c:1},{q:'哪条小路最短？',o:['━━━━','━━━━━━━━','━━'],c:2}]; const x=pickSet(sets); return choiceQuestion(x.q,x.o,x.c,{hint:'从同一个起点开始比较'}); }
+  if (type === 'color') { const rows=[['找出红色的图形','🔴','🔵','🟡'],['找出蓝色的图形','🔵','🟢','🔴'],['找出黄色的图形','🟡','🟣','🟢'],['找出紫色的图形','🟣','🟡','🔵']]; const row=pickSet(rows); return choiceQuestion(row[0],row.slice(1),0); }
+  if (type === 'shape') { const rows=[['哪个是三角形？','🔺','🔵','🟨'],['哪个是圆形？','🔵','🔺','🟨'],['哪个是正方形？','🟨','🔵','🔺'],['哪个图形没有角？','⚪','🟨','🔺']]; const row=pickSet(rows); return choiceQuestion(row[0],row.slice(1),0); }
+  if (type === 'category') { const groups=[['🍎','🍌','🚗','哪个不是水果？'],['🐶','🐰','🧢','哪个不是动物？'],['👕','👟','🍰','哪个不是衣物？'],['🥛','🪣','🍎','哪个不能装东西？']]; const row=pickSet(groups); const opts=shuffle(row.slice(0,3).map((x,i)=>({x,correct:i===2}))); return {title:row[3],correct:opts.findIndex(x=>x.correct),options:opts.map(x=>({visual:x.x}))}; }
+  if (type === 'ab' || type === 'complex') return buildPatternQuestion(type,lesson?.patternThemeHistory || gameSession?.patternThemeHistory || new Set());
+  if (['count','count5','count10','count20'].includes(type)) { const limit=type==='count5'?5:type==='count20'?20:type==='count10'?10:6; const floor=limit>10?11:1; const n=floor+Math.floor(Math.random()*(limit-floor+1)); const symbol=pickTheme(['🍎','🐟','🐦','🦆']); return numberQuestion('数一数，一共有几个？',`${symbol} `.repeat(n),n,floor,limit); }
   if (type === 'match') { const n=2+Math.floor(Math.random()*4); return numberQuestion(`${n} 只小兔，每只一根胡萝卜，需要几根？`,`🐰 `.repeat(n),n,1,6); }
-  if (type === 'compare') { const a=1+Math.floor(Math.random()*4),b=a+1+Math.floor(Math.random()*2); return choiceQuestion('哪一组更多？',[{visual:'🍎'.repeat(a),label:`${a} 个`},{visual:'🍎'.repeat(b),label:`${b} 个`},{visual:'一样多'}],1); }
-  if (type === 'instruction') { const sets=[{q:'先点圆形，再点三角形',o:['🔵 → 🔺','🔺 → 🔵','🟨 → 🔵'],c:0},{q:'先选红色，再选黄色',o:['🔴 → 🟡','🟡 → 🔴','🔵 → 🟡'],c:0}]; const x=pick(sets); return choiceQuestion('听懂指令，选出正确顺序',x.o,x.c,{hint:x.q}); }
+  if (type === 'compare') { const a=1+Math.floor(Math.random()*4),b=a+1+Math.floor(Math.random()*2),symbol=pickTheme(['🍎','🐟','🚗','🐦']); return choiceQuestion('哪一组更多？',[{visual:`${symbol} `.repeat(a)},{visual:`${symbol} `.repeat(b)},{visual:'一样多'}],1); }
+  if (type === 'instruction') { const sets=[{q:'先点圆形，再点三角形',o:['🔵 → 🔺','🔺 → 🔵','🟨 → 🔵'],c:0},{q:'先选红色，再选黄色',o:['🔴 → 🟡','🟡 → 🔴','🔵 → 🟡'],c:0},{q:'先找小猫，再找小鱼',o:['🐱 → 🐟','🐟 → 🐱','🐶 → 🐟'],c:0},{q:'先拿帽子，再拿鞋子',o:['🧢 → 👟','👟 → 🧢','👕 → 👟'],c:0},{q:'先拿苹果，再拿皮球',o:['🍎 → ⚽','⚽ → 🍎','🍌 → ⚽'],c:0}]; const x=pickSet(sets); return choiceQuestion('听懂指令，选出正确顺序',x.o,x.c,{hint:x.q}); }
   if (type === 'number10') { const n=2+Math.floor(Math.random()*7); return numberQuestion('数字火车缺了哪一节？',`${n-1}　❓　${n+1}`,n,1,10); }
-  if (type === 'number-order') { const sets=[{q:'哪一组是从小到大？',o:['2　5　8','8　5　2','5　2　8'],c:0},{q:'哪一组是从大到小？',o:['9　6　3','3　6　9','6　9　3'],c:0}]; const x=pick(sets); return choiceQuestion(x.q,x.o,x.c); }
-  if (type === 'sort') return choiceQuestion('哪一组是从短到长？',['━　━━　━━━','━━━　━━　━','━━　━　━━━'],0);
-  if (type === 'space') { const sets=[{q:'哪个在盒子里面？',o:['🐰 📦','📦🐰','🐰⬆️📦'],c:1},{q:'哪个在小树上面？',o:['🐦\n🌳','🌳\n🐦','🐦🌳'],c:0},{q:'哪个在小猫右边？',o:['🐶 🐱','🐱 🐶','🐶\n🐱'],c:1}]; const x=pick(sets); return choiceQuestion(x.q,x.o,x.c); }
-  if (type === 'position') { const sets=[{q:'谁在小树后面？',o:['🌳🐰','🐰🌳','🐰\n🌳'],c:0},{q:'谁离小屋最近？',o:['🏠🐶','🏠　　　🐶','🐶　　　🏠'],c:0}]; const x=pick(sets); return choiceQuestion(x.q,x.o,x.c); }
-  if (['addition5','addition10'].includes(type)) { const limit=type==='addition5'?5:10; const a=1+Math.floor(Math.random()*(limit-2)); const b=1+Math.floor(Math.random()*(limit-a)); return numberQuestion(`${a} 个苹果又来了 ${b} 个，一共有几个？`,`${'🍎'.repeat(a)} ＋ ${'🍎'.repeat(b)}`,a+b,0,limit); }
-  if (['subtraction5','subtraction10'].includes(type)) { const limit=type==='subtraction5'?5:10; const a=2+Math.floor(Math.random()*(limit-1)); const b=1+Math.floor(Math.random()*(a-1)); return numberQuestion(`${a} 个气球飞走 ${b} 个，还剩几个？`,`${a} － ${b} ＝ ❓`,a-b,0,limit); }
-  if (type === 'correspondence') { const n=1+Math.floor(Math.random()*9); return numberQuestion('哪张数字卡和点子一样多？','● '.repeat(n),n,1,10); }
+  if (type === 'number-order') { const sets=[{q:'哪一组是从小到大？',o:['2　5　8','8　5　2','5　2　8'],c:0},{q:'哪一组是从大到小？',o:['9　6　3','3　6　9','6　9　3'],c:0},{q:'把 4、1、7 从小到大排好',o:['1　4　7','7　4　1','4　1　7'],c:0},{q:'把 3、6、9 从大到小排好',o:['9　6　3','3　6　9','6　3　9'],c:0}]; const x=pickSet(sets); return choiceQuestion(x.q,x.o,x.c); }
+  if (type === 'sort') { const sets=[{q:'哪一组是从短到长？',o:['━　━━　━━━','━━━　━━　━','━━　━　━━━'],c:0},{q:'哪一组是从少到多？',o:['●　●●　●●●','●●●　●●　●','●●　●　●●●'],c:0},{q:'哪一组是从小到大？',o:['🐭　🐰　🐘','🐘　🐰　🐭','🐰　🐭　🐘'],c:0},{q:'哪一组是从多到少？',o:['●●●●　●●　●','●　●●　●●●●','●●　●●●●　●'],c:0}]; const x=pickSet(sets); return choiceQuestion(x.q,x.o,x.c); }
+  if (type === 'space') { const sets=[{q:'哪只小兔在盒子里面？',k:['inside','outside','above'],s:'rabbit',r:'box',c:0},{q:'哪只小鸟在小树上面？',k:['above','below','beside'],s:'bird-sun',r:'tree',c:0},{q:'哪只小狗在小猫右边？',k:['left','right','above'],s:'dog',r:'cat',c:1},{q:'哪个皮球在盒子下面？',k:['beside','above','below'],s:'ball',r:'box',c:2}]; const x=pickSet(sets); return choiceQuestion(x.q,x.k.map(kind=>({visual:relationPicture(kind,x.s,x.r),richVisual:true})),x.c); }
+  if (type === 'position') { const sets=[{q:'哪只小兔躲在树后面？',k:['behind','front','beside'],s:'rabbit',r:'tree',c:0},{q:'哪只小狗离小屋最近？',k:['near','far','above'],s:'dog',r:'house-small',c:0},{q:'哪只小兔站在两棵树中间？',k:['middle','left','right'],s:'rabbit',r:'tree',c:0},{q:'哪只小猫站在盒子前面？',k:['behind','beside','front'],s:'cat',r:'box',c:2}]; const x=pickSet(sets); return choiceQuestion(x.q,x.k.map(kind=>({visual:relationPicture(kind,x.s,x.r),richVisual:true})),x.c); }
+  if (['addition5','addition10'].includes(type)) { const limit=type==='addition5'?5:10; const a=1+Math.floor(Math.random()*(limit-2)); const b=1+Math.floor(Math.random()*(limit-a)); const symbol=pickTheme(['🍎','🐟','🦆','🍪']); return numberQuestion(`左边有 ${a} 个，右边又来 ${b} 个，一共有几个？`,`${`${symbol} `.repeat(a)} ＋ ${`${symbol} `.repeat(b)}`,a+b,0,limit); }
+  if (['subtraction5','subtraction10'].includes(type)) { const limit=type==='subtraction5'?5:10; const a=2+Math.floor(Math.random()*(limit-1)); const b=1+Math.floor(Math.random()*(a-1)); const symbol=pickTheme(['🎈','🐦','🦆','🍪']); return numberQuestion(`原来有 ${a} 个，离开 ${b} 个，还剩几个？`,`${`${symbol} `.repeat(a)} － ${`${symbol} `.repeat(b)}`,a-b,0,limit); }
+  if (type === 'correspondence') { const n=1+Math.floor(Math.random()*9); const symbol=pickTheme(['🍎','🐟','🐰','🧱']); return numberQuestion('哪张数字卡和图中的物品一样多？',`${symbol} `.repeat(n),n,1,10); }
   if (type === 'number50' || type === 'number100') { const step=pick([1,2,5,10]); const max=type==='number50'?50:100; const start=1+Math.floor(Math.random()*Math.max(1,max-step*2)); const answer=start+step; return numberQuestion('按照规律，空格里是几？',`${start}　❓　${start+step*2}`,answer,1,max); }
   if (type === 'arithmetic20') { const add=Math.random()>.5; const a=add?6+Math.floor(Math.random()*8):11+Math.floor(Math.random()*9); const b=1+Math.floor(Math.random()*(add?20-a:a-1)); const answer=add?a+b:a-b; return numberQuestion(`${a} ${add?'＋':'－'} ${b} ＝？`,'🧮',answer,0,20); }
-  if (type === 'word-problem') { const sets=[{q:'车上有 6 人，又上来 3 人，现在有几人？',d:'🚌  6 ＋ 3',a:9},{q:'盘里有 8 块饼干，吃掉 2 块，还剩几块？',d:'🍪  8 － 2',a:6}]; const x=pick(sets); return numberQuestion(x.q,x.d,x.a,0,20); }
-  if (type === 'geometry2d') { const sets=[{q:'哪个图形有 3 条边？',o:['🔺','🟨','⚪'],c:0},{q:'哪个图形没有角？',o:['⚪','🔺','🟨'],c:0}]; const x=pick(sets); return choiceQuestion(x.q,x.o,x.c); }
-  if (type === 'geometry3d') { const sets=[{q:'哪个物体可以向各个方向滚动？',o:['⚽','🧊','🎁'],c:0},{q:'哪个最像正方体？',o:['🧊','🥫','⚽'],c:0}]; const x=pick(sets); return choiceQuestion(x.q,x.o,x.c); }
-  if (type === 'transform') { const sets=[{q:'箭头向右转一次，会指向哪里？',d:'⬆️  ↷',o:['➡️','⬅️','⬇️'],c:0},{q:'哪个图案左右对称？',d:'沿中线对折',o:['🦋','🌙','↗️'],c:0}]; const x=pick(sets); return choiceQuestion(x.q,x.o,x.c,{display:x.d}); }
-  if (type === 'measure') return choiceQuestion('用同样长的小方块测量，哪条占 5 格？',[{visual:'▰▰▰',label:'3 格'},{visual:'▰▰▰▰▰',label:'5 格'},{visual:'▰▰▰▰',label:'4 格'}],1,{display:'每格一样长'});
-  if (type === 'statistics') { const rows=[{q:'哪种水果最多？',d:'苹果　●●●●<br>香蕉　●●<br>葡萄　●●●',o:['苹果','香蕉','葡萄'],c:0},{q:'哪两种一样多？',d:'小猫　●●●<br>小狗　●●<br>小兔　●●',o:['小狗和小兔','小猫和小狗','小猫和小兔'],c:0}]; const x=pick(rows); return choiceQuestion(x.q,x.o,x.c,{display:x.d}); }
-  if (type === 'order') { const sets=[{q:'早上起床后，先做什么？',o:['刷牙','睡觉','吃晚饭'],c:0},{q:'种下一颗种子以后，会发生什么？',o:['发芽','回到种子袋','变成石头'],c:0},{q:'吃饭以前应该先做什么？',o:['洗手','睡觉','穿雨衣'],c:0}]; const x=pick(sets); return choiceQuestion(x.q,x.o,x.c); }
-  const sets=[{q:'小红帽戴红帽子。哪个是小红帽？',o:['🔴','🔵','🟡'],c:0},{q:'不是圆形，也不是蓝色。选哪个？',o:['🔴','🟦','🔺'],c:2},{q:'会游泳，但不是小鸟。选哪个？',o:['🐟','🐦','🐰'],c:0}]; const x=pick(sets); return choiceQuestion(x.q,x.o,x.c);
+  if (type === 'word-problem') { const sets=[{q:'车上有 6 人，又上来 3 人，现在有几人？',d:'🚌  6 ＋ 3',a:9},{q:'盘里有 8 块饼干，吃掉 2 块，还剩几块？',d:'🍪  8 － 2',a:6},{q:'池塘里有 5 只鸭，又游来 4 只，一共有几只？',d:'🦆  5 ＋ 4',a:9},{q:'树上有 10 只鸟，飞走 3 只，还剩几只？',d:'🐦  10 － 3',a:7}]; const x=pickSet(sets); return numberQuestion(x.q,x.d,x.a,0,20); }
+  if (type === 'geometry2d') { const sets=[{q:'哪个图形有 3 条边？',o:['🔺','🟨','⚪'],c:0},{q:'哪个图形没有角？',o:['⚪','🔺','🟨'],c:0},{q:'哪个图形有 4 条一样长的边？',o:['🟨','🔺','⚪'],c:0},{q:'哪个图形可以像车轮一样转？',o:['🔵','🟨','🔺'],c:0}]; const x=pickSet(sets); return choiceQuestion(x.q,x.o,x.c); }
+  if (type === 'geometry3d') { const sets=[{q:'哪个物体可以向各个方向滚动？',o:['⚽','🧊','🎁'],c:0},{q:'哪个最像正方体？',o:['🧊','🥫','⚽'],c:0},{q:'哪个物体既能滚动，也能立起来？',o:['🥫','⚽','🧊'],c:0},{q:'哪个物体最适合稳稳叠高？',o:['🎁','⚽','🥫'],c:0}]; const x=pickSet(sets); return choiceQuestion(x.q,x.o,x.c); }
+  if (type === 'transform') { const sets=[{q:'箭头向右转一次，会指向哪里？',d:'⬆️  ↷',o:['➡️','⬅️','⬇️'],c:0},{q:'哪个图案左右对称？',d:'沿中线对折',o:['🦋','🌙','↗️'],c:0},{q:'向左的箭头转半圈，会指向哪里？',d:'⬅️  ↻ 半圈',o:['➡️','⬆️','⬇️'],c:0},{q:'向下的箭头向左转一次，会指向哪里？',d:'⬇️  ↶',o:['➡️','⬅️','⬆️'],c:0}]; const x=pickSet(sets); return choiceQuestion(x.q,x.o,x.c,{display:x.d}); }
+  if (type === 'measure') { const sets=[{q:'哪条彩带最长？',o:[{visual:'<span class="logic-ribbon ribbon-sm"></span>',richVisual:true},{visual:'<span class="logic-ribbon ribbon-lg"></span>',richVisual:true},{visual:'<span class="logic-ribbon ribbon-md"></span>',richVisual:true}],c:1},{q:'哪一个杯子里的水最多？',o:[{visual:capacityPicture(1),richVisual:true},{visual:capacityPicture(3),richVisual:true},{visual:capacityPicture(2),richVisual:true}],c:1},{q:'哪一摞积木最高？',o:[{visual:heightPicture(1),richVisual:true},{visual:heightPicture(3),richVisual:true},{visual:heightPicture(2),richVisual:true}],c:1},{q:'哪个水桶装得最少？',o:[{visual:capacityPicture(3,'bucket'),richVisual:true},{visual:capacityPicture(2,'bucket'),richVisual:true},{visual:capacityPicture(1,'bucket'),richVisual:true}],c:2}]; const x=pickSet(sets); return choiceQuestion(x.q,x.o,x.c,{hint:'把起点对齐，再认真比较'}); }
+  if (type === 'statistics') { const rows=[{q:'哪种水果最多？',d:'苹果　●●●●<br>香蕉　●●<br>葡萄　●●●',o:['苹果','香蕉','葡萄'],c:0},{q:'哪两种一样多？',d:'小猫　●●●<br>小狗　●●<br>小兔　●●',o:['小狗和小兔','小猫和小狗','小猫和小兔'],c:0},{q:'哪种玩具最少？',d:'皮球　●●●<br>积木　●<br>风筝　●●',o:['积木','皮球','风筝'],c:0},{q:'哪种小动物最少？',d:'小鸟　●●<br>小鸭　●●●●<br>小鱼　●●●',o:['小鸟','小鸭','小鱼'],c:0}]; const x=pickSet(rows); return choiceQuestion(x.q,x.o,x.c,{display:x.d}); }
+  if (type === 'order') { const sets=[{q:'早上起床后，先做什么？',o:['刷牙','睡觉','吃晚饭'],c:0},{q:'种下一颗种子以后，会发生什么？',o:['发芽','回到种子袋','变成石头'],c:0},{q:'吃饭以前应该先做什么？',o:['洗手','睡觉','穿雨衣'],c:0},{q:'下雨时出门以前先穿什么？',o:['穿雨衣','睡觉','吃晚饭'],c:0}]; const x=pickSet(sets); return choiceQuestion(x.q,x.o,x.c); }
+  const sets=[{q:'小红帽戴红帽子。哪个是小红帽？',o:['🔴','🔵','🟡'],c:0},{q:'不是圆形，也不是蓝色。选哪个？',o:['🔴','🟦','🔺'],c:2},{q:'会游泳，但不是小鸟。选哪个？',o:['🐟','🐦','🐰'],c:0},{q:'有四条边，而且是黄色。选哪个？',o:['🟨','🔺','🔵'],c:0}]; const x=pickSet(sets); return choiceQuestion(x.q,x.o,x.c);
 }
+
+function logicQuestionSignature(question) {
+  const optionSet = question.options.map(option => `${option.visual}|${option.label || ''}`).sort();
+  return [question.title,question.display || '',...optionSet].join('::');
+}
+
+function uniqueLogicQuestion(type, history = new Set()) {
+  let question;
+  for (let attempt = 0; attempt < 80; attempt += 1) {
+    question = generateLogicQuestion(type);
+    const signature = logicQuestionSignature(question);
+    if (!history.has(signature)) { history.add(signature); return enrichLogicQuestion(question,type); }
+  }
+  history.add(logicQuestionSignature(question)); return enrichLogicQuestion(question,type);
+}
+
+function nextLogicQuestion(type) { return uniqueLogicQuestion(type,lesson?.logicQuestionHistory || new Set()); }
+function logicQuestionNarration(question, instruction = '') { return [question.speak || question.title,question.speak ? '' : question.hint,instruction].filter(Boolean).join('。'); }
 
 function recordAnswer(item, correct) {
   const old = getStats(item.id); const intervals = [0, 1, 3, 7, 14];
@@ -640,28 +978,38 @@ function recordAnswer(item, correct) {
 
 function handleAnswer(button, index) {
   const task = lesson.tasks[lesson.index]; if (task.answered) return; task.answered = true;
-  const correct = index === task.question.correct; $$('.answer-button').forEach(b => b.disabled = true);
+  const correct = index === task.question.correct; const isEnglish = task.item.subject === 'english'; $$('.answer-button').forEach(b => b.disabled = true);
   if (correct) {
-    button.classList.add('correct'); lesson.correct += 1; lesson.stars += 1; state.stars += 1; recordAnswer(task.item, true); speak('答对了，你真的理解了');
+    button.classList.add('correct'); lesson.correct += 1; lesson.stars += 1; state.stars += 1; recordAnswer(task.item, true); speak(isEnglish ? 'Great job!' : '答对了，你真的理解了',isEnglish ? 'en-US' : 'zh-CN');
     celebrate(button);
-    $('#answerFeedback').innerHTML = `<div class="feedback-box">答对了！${masteryLabel(getStats(task.item.id).score)} <button class="lesson-next" data-next-task>继续</button></div>`;
+    $('#answerFeedback').innerHTML = task.question.visualOnly ? `<div class="logic-result-mark success" aria-label="${isEnglish ? 'Correct' : '答对了'}">✓</div><button class="lesson-next icon-next" data-next-task aria-label="${isEnglish ? 'Continue' : '继续'}">›</button>` : `<div class="feedback-box">答对了！${masteryLabel(getStats(task.item.id).score)} <button class="lesson-next" data-next-task>继续</button></div>`;
   } else {
-    button.classList.add('wrong'); const right = $$('.answer-button')[task.question.correct]; right.classList.add('correct'); lesson.wrong += 1; recordAnswer(task.item, false); speak('没关系，我们再学一次');
+    button.classList.add('wrong'); const right = $$('.answer-button')[task.question.correct]; right.classList.add('correct'); lesson.wrong += 1; recordAnswer(task.item, false); speak(isEnglish ? 'Listen once more.' : '没关系，我们再学一次',isEnglish ? 'en-US' : 'zh-CN');
     if (task.retry < 1) {
       const retryTasks = task.item.subject === 'logic' ? [{ kind: 'logic-manipulate', item: task.item }, { kind: 'practice', item: task.item, retry: task.retry + 1, stage: '闯' }] : [{ kind: 'teach', item: task.item }, { kind: 'practice', item: task.item, retry: task.retry + 1 }];
       lesson.tasks.splice(Math.min(lesson.index + 3, lesson.tasks.length), 0, ...retryTasks);
     }
-    $('#answerFeedback').innerHTML = `<div class="feedback-box">没关系，正确答案已经亮起来了。稍后熊猫团团会换一种方式再教一次。<button class="lesson-next" data-next-task>我知道了</button></div>`;
+    $('#answerFeedback').innerHTML = task.question.visualOnly ? `<div class="logic-result-mark gentle" aria-label="${isEnglish ? 'Listen again' : '看看正确答案'}">↻</div><button class="lesson-next icon-next" data-next-task aria-label="${isEnglish ? 'Continue' : '继续'}">›</button>` : `<div class="feedback-box">没关系，正确答案已经亮起来了。稍后熊猫团团会换一种方式再教一次。<button class="lesson-next" data-next-task>我知道了</button></div>`;
   }
   $('#sessionStars').textContent = lesson.stars; saveState();
 }
 
 function nextTask() { cancelVoiceRecording(); lesson.index += 1; renderLesson(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
 
+async function requestLessonLandscape() {
+  try { if (!document.fullscreenElement) await document.documentElement.requestFullscreen?.(); } catch (_) {}
+  try { await screen.orientation?.lock?.('landscape'); } catch (_) {}
+  const english = document.body.classList.contains('english-lesson-active');
+  showToast(matchMedia('(orientation: landscape)').matches ? (english ? 'Landscape lesson ready' : '横屏课堂已打开') : (english ? 'Turn your phone sideways' : '请把手机横过来学习'));
+}
+
 function renderLessonSummary() {
   $('#lessonProgress').style.width = '100%';
   const reviewed = lesson.tasks.filter(t => t.kind === 'practice').length; const accuracy = Math.round(lesson.correct / Math.max(lesson.correct + lesson.wrong, 1) * 100);
-  $('#lessonContent').innerHTML = `<span class="lesson-summary-emoji">${accuracy >= 80 ? '🌈' : '🌱'}</span><h2>${accuracy >= 80 ? '今天学得很扎实！' : '今天认真努力了！'}</h2><p class="teach-meaning">学习不是一次全对，而是每次都多懂一点。</p><div class="summary-list"><div class="summary-item"><span>完成练习</span><b>${reviewed} 次</b></div><div class="summary-item"><span>本次正确率</span><b>${accuracy}%</b></div><div class="summary-item"><span>获得星星</span><b>⭐ ${lesson.stars}</b></div></div><div class="summary-actions"><button class="soft-button" data-finish="curriculum">看看成长地图</button><button class="lesson-next" data-finish="home">完成学习</button></div>`;
+  const englishOnly = lesson.tasks.some(task => task.item?.subject === 'english') && !lesson.tasks.some(task => task.item?.subject && task.item.subject !== 'english');
+  $('#lessonContent').innerHTML = englishOnly
+    ? `<span class="lesson-summary-emoji">${accuracy >= 80 ? '🌈' : '🌱'}</span><h2>${accuracy >= 80 ? 'Wonderful work!' : 'You kept trying!'}</h2><p class="teach-meaning">Listen, speak, play, and read a little every day.</p><div class="summary-list"><div class="summary-item"><span>Practice</span><b>${reviewed}</b></div><div class="summary-item"><span>Accuracy</span><b>${accuracy}%</b></div><div class="summary-item"><span>Stars</span><b>⭐ ${lesson.stars}</b></div></div><div class="summary-actions"><button class="soft-button" data-finish="english-world">Map</button><button class="lesson-next" data-finish="home">Done</button></div>`
+    : `<span class="lesson-summary-emoji">${accuracy >= 80 ? '🌈' : '🌱'}</span><h2>${accuracy >= 80 ? '今天学得很扎实！' : '今天认真努力了！'}</h2><p class="teach-meaning">学习不是一次全对，而是每次都多懂一点。</p><div class="summary-list"><div class="summary-item"><span>完成练习</span><b>${reviewed} 次</b></div><div class="summary-item"><span>本次正确率</span><b>${accuracy}%</b></div><div class="summary-item"><span>获得星星</span><b>⭐ ${lesson.stars}</b></div></div><div class="summary-actions"><button class="soft-button" data-finish="curriculum">看看成长地图</button><button class="lesson-next" data-finish="home">完成学习</button></div>`;
   requestAnimationFrame(() => celebrate($('.lesson-summary-emoji'),['⭐','🌈','✨','⭐','🌱','✨','⭐','🌟']));
   if (!lesson.completed) completeLesson();
 }
@@ -729,7 +1077,7 @@ function startProgressiveGame(subject, level) {
     source = allSubjectItems('english').filter(item => item.unitIndex >= range[0] && item.unitIndex < range[1]);
   }
   const pool = shuffle(source);
-  gameSession = { subject, level, round: 0, correct: 0, items: pool.slice(0, 5), answered: false };
+  gameSession = { subject, level, round: 0, correct: 0, items: pool.slice(0, 5), logicQuestionHistory: new Set(), logicVariantCursor: {}, patternThemeHistory: new Set(), logicSceneHistory: new Set(), answered: false };
   $('#gameRoutePanel').hidden = true; $('#progressiveGame').hidden = false;
   $('#gamePlayTitle').textContent = `${GAME_THEME[subject].name} · ${GAME_LEVELS[subject][level][0]}`;
   renderGameRound(); window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -746,27 +1094,21 @@ function languageGameOptions(item, render, count = 3) {
 }
 
 function buildEnglishGame(item, level) {
-  const sentence = englishSentence(item);
-  if (level === 0) return { title:'仔细听，点亮正确的宝物', hint:'可以反复点击声音按钮', speak:item.word, autoSpeak:true, ...languageGameOptions(item, x => ({visual:x.emoji,label:''})) };
-  if (level === 1) return { title:`帮 “${item.word}” 找到图片`, hint:'把单词和画面连在一起', ...languageGameOptions(item, x => ({visual:x.emoji,label:x.meaning})) };
-  if (level === 2) return { title:'闪出来的图片，英语怎么说？', hint:'快速认一认', display:item.emoji, ...languageGameOptions(item, x => ({visual:x.word,label:x.meaning})) };
-  if (level === 3) return { title:`小狐狸看到了 ${item.emoji}，它应该怎么说？`, hint:'选择最合适的一句话', speak:sentence, ...languageGameOptions(item, x => ({visual:englishSentence(x),label:''})) };
-  if (level === 4) return { title:'给句子火车装上正确车厢', hint:'读一读完整主题句', display:replaceEnglishWord(sentence,item.word,'＿＿＿'), ...languageGameOptions(item, x => ({visual:x.word,label:x.meaning})) };
-  if (level === 5) return { title:'听读绘本句子，选出正确画面', hint:sentence, speak:sentence, autoSpeak:true, display:'📖', ...languageGameOptions(item, x => ({visual:x.emoji,label:x.word})) };
-  if (level === 6) return { title:`哪个词以 “${item.word[0].toUpperCase()}” 开头？`, hint:item.phonics || '先慢慢说出每个单词', display:`${item.word[0].toUpperCase()} ${item.word[0].toLowerCase()}`, ...languageGameOptions(item, x => ({visual:x.emoji,label:x.word})) };
-  if (level === 7) return { title:'听音、分音，再找到正确单词', hint:item.phonics || '把声音慢慢合起来', speak:item.word, autoSpeak:true, display:item.phonics || `🔤 ${item.word}`, ...languageGameOptions(item, x => ({visual:x.word,label:x.meaning})) };
-  if (level === 8) return { title:'哪幅画和这句话说的一样？', hint:'先读关键词，再看画面', speak:sentence, display:sentence, ...languageGameOptions(item, x => ({visual:x.emoji,label:x.meaning})) };
-  if (level === 9) return { title:'听一听，找到句子里的高频词', hint:`目标词：${item.word}`, speak:sentence, autoSpeak:true, display:replaceEnglishWord(sentence,item.word,'____'), ...languageGameOptions(item, x => ({visual:x.word,label:x.phonics||''})) };
-  const reader = englishReaderLines(item);
-  if (level === 10) {
-    const sequences = shuffle([
-      { lines:[reader[0],reader[1],reader[2]], correct:true },
-      { lines:[reader[1],reader[0],reader[2]], correct:false },
-      { lines:[reader[0],reader[2],reader[1]], correct:false }
-    ]);
-    return { title:'哪一组是完整的故事顺序？', hint:'先看开头，再找发展和结尾', display:item.emoji, compact:true, correct:sequences.findIndex(option => option.correct), options:sequences.map(option => ({ visual:option.lines.map((line,index) => `${index + 1}. ${line}`).join('<br>') })) };
-  }
-  return { title:'这页绘本的关键词是哪一个？', hint:reader.join(' '), speak:reader.join(' '), autoSpeak:true, display:'📖', ...languageGameOptions(item, x => ({visual:x.emoji,label:x.word})) };
+  const sentence = englishSentence(item); const reader = englishReaderLines(item);
+  const scenes = () => languageGameOptions(item,x=>({visual:englishCartoonScene(x,{variant:x.itemIndex || 0,compact:true}),label:''}));
+  const words = () => languageGameOptions(item,x=>({visual:escapeHTML(x.word),label:''}));
+  if (level === 0) return {title:'Listen and choose.',speak:item.word,autoSpeak:true,visualOnly:true,...scenes()};
+  if (level === 1) return {title:'Match the word.',speak:item.word,autoSpeak:true,display:`<strong>${escapeHTML(item.word)}</strong>`,visualOnly:true,...scenes()};
+  if (level === 2) return {title:'Choose the word.',speak:item.word,display:englishCartoonScene(item,{compact:true}),visualOnly:true,...words()};
+  if (level === 3) return {title:'Listen and choose.',speak:sentence,autoSpeak:true,display:englishCartoonScene(item,{caption:sentence,compact:true}),visualOnly:true,...scenes()};
+  if (level === 4) return {title:'Complete the sentence.',speak:sentence,display:replaceEnglishWord(escapeHTML(sentence),escapeHTML(item.word),'_____'),visualOnly:true,...words()};
+  if (level === 5) return {title:'Listen to the page.',speak:sentence,autoSpeak:true,display:englishCartoonScene(item,{caption:sentence,compact:true}),visualOnly:true,...scenes()};
+  if (level === 6) return {title:'Find the first sound.',speak:item.word,autoSpeak:true,display:`<strong>${item.word[0].toUpperCase()} ${item.word[0].toLowerCase()}</strong>`,visualOnly:true,...scenes()};
+  if (level === 7) return {title:'Blend and read.',speak:item.word,autoSpeak:true,display:`<strong>${escapeHTML(item.phonics || item.word)}</strong>`,visualOnly:true,...words()};
+  if (level === 8) return {title:'Match the sentence.',speak:sentence,autoSpeak:true,display:`<strong>${escapeHTML(sentence)}</strong>`,visualOnly:true,...scenes()};
+  if (level === 9) return {title:'Find the word.',speak:sentence,autoSpeak:true,display:replaceEnglishWord(escapeHTML(sentence),escapeHTML(item.word),'_____'),visualOnly:true,...words()};
+  if (level === 10) return {title:'Find the next page.',speak:reader[1],autoSpeak:true,display:englishCartoonScene(item,{caption:reader[0],compact:true}),visualOnly:true,...languageGameOptions(item,x=>({visual:englishCartoonScene(x,{caption:englishReaderLines(x)[1],compact:true}),label:''}))};
+  return {title:'Listen to the story and choose.',speak:`${reader[0]} ${englishSentence(item)}`,autoSpeak:true,visualOnly:true,...scenes()};
 }
 
 function buildChineseGame(item, level) {
@@ -787,7 +1129,7 @@ function buildLogicGame(item, level) {
     ['number50','number100','count20'],['geometry2d','geometry3d'],['measure','statistics'],['arithmetic20','word-problem','reason','deduction']
   ][level];
   const type = shuffle(types)[0];
-  return generateLogicQuestion(type);
+  return uniqueLogicQuestion(type,gameSession.logicQuestionHistory);
 }
 
 function renderGameRound() {
@@ -797,18 +1139,26 @@ function renderGameRound() {
   gameSession.question = question; gameSession.answered = false;
   $('#gameCorrectCount').textContent = gameSession.correct; $('#gameRoundProgress').style.width = `${round / items.length * 100}%`;
   const sceneClass = `${subject}-game-scene level-${level + 1}`;
-  $('#gamePlayContent').innerHTML = `<div class="game-round-label">第 ${round + 1} / ${items.length} 轮</div><div class="${sceneClass}"><span class="game-scene-mascot">${GAME_THEME[subject].icon}</span>${question.display ? `<div class="game-question-display">${question.display}</div>` : '<div class="game-question-display sound-rings">♪</div>'}</div><h2>${question.title}</h2><p>${question.hint || '仔细观察，再做选择'}</p>${question.speak ? `<button class="game-listen" data-speak-now="${question.speak}" data-lang="${subject === 'english' ? 'en-US' : 'zh-CN'}">🔊 再听一次</button>` : ''}<div class="game-choice-grid${question.compact ? ' compact' : ''}">${question.options.map((option,index)=>`<button data-game-choice="${index}"><span>${option.visual}</span>${option.label ? `<small>${option.label}</small>` : ''}</button>`).join('')}</div><div id="gameFeedback"></div>`;
-  if (question.autoSpeak) setTimeout(() => speak(question.speak, subject === 'english' ? 'en-US' : 'zh-CN'), 180);
+  const gameNarration = subject === 'logic' ? logicQuestionNarration(question) : question.speak;
+  if (subject === 'logic') {
+    $('#gamePlayContent').innerHTML = `<div class="logic-game-visual ${question.patternMode ? 'pattern-question-stage' : ''}"><span class="sr-only">${question.title}。${question.hint || ''}</span><div class="game-round-dots" aria-label="第 ${round + 1} 轮，共 ${items.length} 轮">${items.map((_,index) => `<i class="${index <= round ? 'done' : ''}"></i>`).join('')}</div>${gameNarration ? `<button class="game-listen icon-only-audio" data-speak-now="${escapeHTML(gameNarration)}" data-lang="zh-CN" aria-label="再听题目">🔊</button>` : ''}${question.display ? `<div class="game-question-display ${question.patternMode ? 'pattern-sequence-shell' : ''}">${question.display}</div>` : ''}<div class="game-choice-grid logic-picture-choices ${question.patternMode ? 'pattern-choice-grid' : ''}">${question.options.map((option,index)=>`<button data-game-choice="${index}" aria-label="选项 ${index + 1}"><span>${option.visual}</span></button>`).join('')}</div><div id="gameFeedback"></div></div>`;
+  } else if (subject === 'english') {
+    $('#gamePlayContent').innerHTML = `<div class="english-game-visual"><span class="sr-only">${question.title}</span><div class="game-round-dots" aria-label="Round ${round + 1} of ${items.length}">${items.map((_,index)=>`<i class="${index <= round ? 'done' : ''}"></i>`).join('')}</div>${gameNarration ? `<button class="english-action-button listen english-game-listen" data-speak-now="${escapeHTML(gameNarration)}" data-lang="en-US" aria-label="Listen again">🔊</button>` : ''}${question.display ? `<div class="english-game-display">${question.display}</div>` : ''}<div class="game-choice-grid english-game-choices">${question.options.map((option,index)=>`<button data-game-choice="${index}" aria-label="Picture ${index + 1}"><span>${option.visual}</span></button>`).join('')}</div><div id="gameFeedback"></div></div>`;
+  } else {
+    $('#gamePlayContent').innerHTML = `<div class="game-round-label">第 ${round + 1} / ${items.length} 轮</div><div class="${sceneClass}"><span class="game-scene-mascot">${GAME_THEME[subject].icon}</span>${question.display ? `<div class="game-question-display">${question.display}</div>` : '<div class="game-question-display sound-rings">♪</div>'}</div><h2>${question.title}</h2><p>${question.hint || '仔细观察，再做选择'}</p>${gameNarration ? `<button class="game-listen" data-speak-now="${escapeHTML(gameNarration)}" data-lang="${subject === 'english' ? 'en-US' : 'zh-CN'}">🔊 再听一次</button>` : ''}<div class="game-choice-grid${question.compact ? ' compact' : ''}">${question.options.map((option,index)=>`<button data-game-choice="${index}"><span>${option.visual}</span>${option.label ? `<small>${option.label}</small>` : ''}</button>`).join('')}</div><div id="gameFeedback"></div>`;
+  }
+  if (subject === 'logic' || (subject === 'english' && gameNarration) || question.autoSpeak) setTimeout(() => speak(gameNarration, subject === 'english' ? 'en-US' : 'zh-CN'), 180);
 }
 
 function handleGameChoice(button, index) {
   if (!gameSession || gameSession.answered) return; gameSession.answered = true;
   const correct = index === gameSession.question.correct; const buttons = $$('.game-choice-grid button'); buttons.forEach(choice => choice.disabled = true);
   buttons[gameSession.question.correct]?.classList.add('correct');
-  if (correct) { gameSession.correct += 1; button.classList.add('correct'); celebrate(button); speak('答对啦，继续出发'); }
-  else { button.classList.add('wrong'); speak('没关系，看看亮起来的答案'); }
+  const english = gameSession.subject === 'english';
+  if (correct) { gameSession.correct += 1; button.classList.add('correct'); celebrate(button); speak(english ? 'Great job!' : '答对啦，继续出发',english ? 'en-US' : 'zh-CN'); }
+  else { button.classList.add('wrong'); speak(english ? 'Listen once more.' : '没关系，看看亮起来的答案',english ? 'en-US' : 'zh-CN'); }
   $('#gameCorrectCount').textContent = gameSession.correct;
-  $('#gameFeedback').innerHTML = `<div class="game-feedback ${correct ? 'success' : 'gentle'}"><b>${correct ? '太棒了！' : '找到方法了！'}</b><span>${correct ? '你又点亮了一颗小星星。' : '记住这个答案，下一轮继续加油。'}</span></div><button class="lesson-next" data-next-game-round>${gameSession.round === gameSession.items.length - 1 ? '看看成绩' : '下一轮'}</button>`;
+  $('#gameFeedback').innerHTML = gameSession.subject === 'logic' ? `<div class="logic-result-mark ${correct ? 'success' : 'gentle'}" aria-label="${correct ? '答对了' : '看看正确答案'}">${correct ? '✓' : '↻'}</div><button class="lesson-next icon-next" data-next-game-round aria-label="${gameSession.round === gameSession.items.length - 1 ? '查看成绩' : '下一轮'}">›</button>` : english ? `<div class="logic-result-mark ${correct ? 'success' : 'gentle'}" aria-label="${correct ? 'Correct' : 'Listen again'}">${correct ? '✓' : '↻'}</div><button class="lesson-next icon-next" data-next-game-round aria-label="Next">›</button>` : `<div class="game-feedback ${correct ? 'success' : 'gentle'}"><b>${correct ? '太棒了！' : '找到方法了！'}</b><span>${correct ? '你又点亮了一颗小星星。' : '记住这个答案，下一轮继续加油。'}</span></div><button class="lesson-next" data-next-game-round>${gameSession.round === gameSession.items.length - 1 ? '看看成绩' : '下一轮'}</button>`;
 }
 
 function nextGameRound() { gameSession.round += 1; renderGameRound(); }
@@ -818,6 +1168,11 @@ function renderGameResult() {
   state.gameProgress[key] = Math.max(gameStars(gameSession.subject, gameSession.level), earned); state.stars += earned; saveState();
   $('#gameRoundProgress').style.width = '100%'; $('#gameCorrectCount').textContent = score;
   const passed = score >= 3; const hasNext = passed && gameSession.level < GAME_LEVELS[gameSession.subject].length - 1;
+  if (gameSession.subject === 'english') {
+    const action = hasNext ? '<button class="english-action-button next" data-next-game-level aria-label="Next level">›</button>' : '<button class="english-action-button playback" data-replay-game aria-label="Play again">↻</button>';
+    $('#gamePlayContent').innerHTML = `<div class="game-result english-game-result"><span class="result-mascot">★</span><h2>${passed ? 'Great job!' : 'Let\'s try again!'}</h2><div class="result-stars">${[1,2,3].map(n=>`<i class="${n<=earned?'earned':''}">★</i>`).join('')}</div><p>${score} / 5</p><div><button class="english-action-button done" data-close-game aria-label="Back">✓</button>${action}</div></div>`;
+    requestAnimationFrame(() => celebrate($('.result-mascot'))); $('#starCount').textContent = state.stars; return;
+  }
   const action = hasNext ? '<button class="lesson-next" data-next-game-level>下一关</button>' : `<button class="lesson-next" data-replay-game>${passed ? '再玩一次' : '再练一次'}</button>`;
   $('#gamePlayContent').innerHTML = `<div class="game-result"><span class="result-mascot">${GAME_THEME[gameSession.subject].icon}</span><h2>${score >= 4 ? '这一关完成得很棒！' : passed ? '达到解锁标准啦！' : '已经找到不少方法了！'}</h2><div class="result-stars">${[1,2,3].map(n=>`<i class="${n<=earned?'earned':''}">★</i>`).join('')}</div><p>答对 ${score} / 5 题，获得 ${earned} 颗闯关星。${passed ? '下一关已经解锁。' : '答对 3 题就能解锁下一关。'}</p><div><button class="soft-button" data-close-game>回到地图</button>${action}</div></div>`;
   requestAnimationFrame(() => celebrate($('.result-mascot')));
@@ -837,14 +1192,15 @@ document.addEventListener('click', event => {
   const reveal = event.target.closest('[data-reveal-character]'); if (reveal) { const character = reveal.dataset.revealCharacter; const meaning = reveal.dataset.revealMeaning || `${character}字`; celebrate(reveal,['✨','⭐','✨','🌟']); reveal.disabled = true; reveal.style.display = 'none'; $('#characterReveal').innerHTML = `<div class="character-reveal"><span>${character}</span><p>${reveal.dataset.revealVisual || ''} 原来是“${character}”！这幅图表示“${escapeHTML(meaning)}”。</p><button class="lesson-next" data-next-task>去认识它</button></div>`; speak(`${character}，${meaning}`, 'zh-CN'); return; }
   if (event.target.closest('[data-clear-trace]')) { $('#traceCanvas')?._clearTrace?.(); return; }
   const speaking = event.target.closest('[data-start-speaking]'); if (speaking) { startSpeakingCheck(speaking.dataset.startSpeaking,speaking.dataset.speakingLang || 'en-US'); return; }
-  if (event.target.closest('[data-stop-recording]')) { finishVoiceRecording(); return; }
+  if (event.target.closest('[data-stop-recording]')) { finishVoiceRecording(voiceRecording?.lang?.toLowerCase().startsWith('en') ? 'Now listen to your voice.' : '录好了，先听听自己的声音，再决定要不要重录。'); return; }
   if (event.target.closest('[data-play-recording]')) { const audio = $('#recordedVoice'); if (audio) { audio.currentTime = 0; audio.play(); } return; }
   if (event.target.closest('[data-record-again]')) { if (voiceRecording?.target) startSpeakingCheck(voiceRecording.target,voiceRecording.lang); return; }
   if (event.target.closest('[data-finish-speaking]')) { nextTask(); return; }
+  if (event.target.closest('[data-next-demo-step]')) { const task = lesson.tasks[lesson.index]; task.demoStep = (task.demoStep || 0) + 1; renderLogicDemo(task); return; }
   const manip = event.target.closest('[data-manip-index]'); if (manip) {
-    const task = lesson.tasks[lesson.index]; const index = Number(manip.dataset.manipIndex); const mat = $('#thinkingMat');
+    const task = lesson.tasks[lesson.index]; const index = Number(manip.dataset.manipIndex); const mat = $('[data-pattern-slot]') || $('#thinkingMat');
     if (index === task.question.correct) {
-      $$('.manipulative-tray button').forEach(button => button.disabled = true); manip.classList.add('correct'); celebrate(mat); mat.classList.add('filled'); mat.innerHTML = `<strong>${task.question.options[index].visual}</strong><small>放对啦！</small>`; $('#manipFeedback').innerHTML = '<button class="lesson-next" data-next-task>我会摆了</button>'; speak('放对啦，你是怎么想的？');
+      $$('.manipulative-tray button').forEach(button => button.disabled = true); manip.classList.add('correct'); celebrate(mat); mat.classList.add('filled'); mat.innerHTML = `<strong>${task.question.options[index].visual}</strong>`; $('#manipFeedback').innerHTML = '<div class="logic-result-mark success" aria-label="放对了">✓</div><button class="lesson-next icon-next" data-next-task aria-label="继续">›</button>'; speak('放对啦，你是怎么想的？');
     } else { manip.classList.add('try-again'); setTimeout(() => manip.classList.remove('try-again'), 450); speak('再比一比，换一个试试'); }
     return;
   }
@@ -865,7 +1221,16 @@ document.addEventListener('click', event => {
 
 $('#startDaily').addEventListener('click',startDailyLesson);
 $('#soundToggle').addEventListener('click',()=>{state.sound=!state.sound;$('#soundToggle').textContent=state.sound?'🔊':'🔇';saveState();showToast(state.sound?'声音打开啦':'已经静音')});
-$('#exitLesson').addEventListener('click',()=>$('#confirmModal').classList.add('show'));
+$('#exitLesson').addEventListener('click',()=>{
+  const english = lesson?.tasks?.[lesson.index]?.item?.subject === 'english';
+  const modal = $('#confirmModal');
+  modal.querySelector('h2').textContent = english ? 'Take a little break?' : '今天先学到这里吗？';
+  modal.querySelector('p').textContent = english ? 'Your progress is saved.' : '进度已经保存，下次可以接着学。';
+  $('#keepLearning').textContent = english ? 'Keep learning' : '继续学习';
+  $('#confirmExit').textContent = english ? 'Take a break' : '先休息';
+  modal.classList.add('show');
+});
+$('#landscapeMode').addEventListener('click',requestLessonLandscape);
 $('#keepLearning').addEventListener('click',()=>$('#confirmModal').classList.remove('show'));
 $('#confirmExit').addEventListener('click',()=>{$('#confirmModal').classList.remove('show');lesson=null;navigate('home')});
 $('#resetProgress').addEventListener('click',()=>{if(confirm('确定清除全部学习记录吗？此操作无法撤销。')){localStorage.removeItem(STORAGE_KEY);location.reload()}});
